@@ -140,6 +140,79 @@ everything in order.
       Larger chunks mean fewer map calls but slower prefill.
 - [ ] Try `LOCAL_CONCURRENCY=3–4` if LM Studio's parallel-request support keeps up.
 
+## POC on a smaller Mac (24 GB): `make poc`
+
+To try the whole stack before the Studio arrives, `make poc` runs phases 2–6 with
+`config/local-agent.mini-24gb.env.example` instead of the Studio defaults. Everything else
+(LM Studio on `:1234`, SearXNG on `:8888`, OpenCode, the MCP server, the Claude Code policy) is
+the same, so moving to the Studio later is a config swap, not a rebuild.
+
+| | Studio (default) | 24 GB POC profile |
+|---|---|---|
+| general / fast | gpt-oss-120b (~63 GB) | `openai/gpt-oss-20b` (GGUF MXFP4, ~12 GB, MoE) |
+| coder / OpenCode | Qwen3-Coder-30B-A3B | `qwen/qwen3.5-9b` (MLX 4-bit, ~6 GB) |
+| context | 65,536 tokens, both models pinned | 32,768 tokens, nothing pinned; LM Studio JIT-swaps roles |
+| per-call input | 120k chars, 40k chunks | 60k chars, 24k chunks |
+| reasoning effort | model default | `low` |
+| allowed roots | `~/src:~/data:~/Documents` | adds `~/cc_projects` |
+| login agents | installed | skipped (`INSTALL_LAUNCH_AGENTS=1` to install) |
+| `make prep` | run | not run (no sudo, wired limit, or pmset changes) |
+
+Only one model fits in GPU memory at a time on 24 GB. With nothing pinned, LM Studio unloads
+the previous JIT model when the other role is requested, so the first call after a switch pays
+~5–10 s of load time. Models pinned with `lms load` are never unloaded to make room, which is
+why the POC profile sets `LOCAL_MODEL_PRELOAD=none` (10-models.sh then just warms the general
+model with one request). `10-models.sh` also sets LM Studio's default context length, because
+JIT and post-TTL reloads use that default, not the `--context-length` given to `lms load`.
+
+Ports, model ids, and context length all come from the env template, so changing a port means
+editing `LOCAL_LLM_BASE_URL` or `SEARXNG_URL` there and re-running `make poc`. Switching an
+existing install to another profile needs `FORCE_ENV=1` (the old env file is backed up).
+
+`tests/live_e2e.py` calls every tool against the real stack and is the main POC check:
+
+```bash
+uv run --script tests/live_e2e.py               # ~2-3 min on an M4 Pro mini
+uv run --script tests/live_e2e.py --skip-agent  # without the OpenCode task
+```
+
+### What the POC showed (M4 Pro, 24 GB, October 2026)
+
+- All 10 tools pass end to end (`local_agent_task` passed 5 of 6 runs; the 9B coder is
+  not always reliable). gpt-oss-20b runs at ~35–40 tok/s alone; Qwen3.5-9B MLX at ~45.
+- `local_summarize_files` over a real 34-file, 234k-char Python app: 42 local calls, ~97k
+  tokens read locally, one ~4 KB cited overview back, in ~7.5 min. Most citations were right;
+  one named a module path that does not exist, which is why the policy says to spot-check.
+- `local_agent_task` with Qwen3.5-9B finishes a small add-function-plus-tests task in ~50 s.
+  gpt-oss-20b as the OpenCode model stopped early on the same task, so it stays general-only.
+- Limits that are specific to small machines:
+  - **Don't mix roles concurrently.** A request for the other model while one is generating
+    makes LM Studio swap mid-request; the in-flight request is dropped. The MCP server retries
+    once on its side, but an OpenCode task can lose a turn. On the Studio both stay pinned.
+  - **Thinking models spend output budget.** Qwen3.5 ignores `reasoning_effort=low`, and at
+    codegen's low temperature it sometimes thought until `max_tokens` (4,000 tokens for a
+    one-line spec). The POC profile sets `LOCAL_REASONING_EFFORT_CODER=none`, which turns its
+    thinking off for MCP calls (OpenCode still thinks). An answer starved by reasoning now
+    returns an explicit "used its whole budget on reasoning" error, not an empty string.
+  - The machine was already ~10 GB into swap from other apps; pinning both models pushed it
+    to 15 GB and cut gpt-oss throughput to ~10 tok/s, which is why nothing is pinned.
+
+### Fixes found while running the POC (apply to the Studio too)
+
+- `local_agent_task` ran OpenCode with the MCP server's stdin and `$PWD`. OpenCode v2 picks
+  its project directory from `$PWD`, so the agent edited the directory Claude Code was started
+  in instead of the worktree, and could read MCP protocol bytes as prompt. It now gets
+  `stdin=/dev/null`, `PWD=<worktree>`, its own process group, and `--standalone`
+  (`OPENCODE_RUN_ARGS`) so a timeout really stops the agent.
+- JIT reloads used LM Studio's 8k default context, not the 64k given to `lms load`.
+- Concurrent first requests to an unloaded model can 500 during the JIT load; map-reduce now
+  sends the first chunk alone, and `chat()` retries once on 5xx or swap/cancel errors.
+- gpt-oss cites as `【1】`; answers are normalized to `[1]` / `[file:Lx-y]`.
+- `00-macos-prep.sh` would have *lowered* the GPU wired limit on machines under 64 GB
+  (total − 16 GB); it now reserves 8 GB there.
+
+When the Studio arrives: `make all` there (with `FORCE_ENV=1` if you copied this config over).
+
 ## Using it
 
 Things to say to Claude Code:
@@ -215,9 +288,10 @@ there, or sync them (`git`, `mutagen`, or `rsync`).
 
 ```
 mcp_server/local_agent_mcp.py   MCP server (uv inline-deps script; mcp SDK v2)
-config/                         env template, OpenCode, SearXNG, launchd plists
+config/                         env templates (Studio + 24 GB POC), OpenCode, SearXNG, launchd plists
 claude/                         CLAUDE.md policy, subagent, Read hook + settings snippet
 scripts/00..50-*.sh             phased, idempotent setup
 tests/test_offline.py           mocked unit tests (no models needed)
-tests/smoke_stdio.py            live end-to-end test over stdio
+tests/smoke_stdio.py            live smoke test over stdio (status + one ask)
+tests/live_e2e.py               live test of every tool against the real stack
 ```

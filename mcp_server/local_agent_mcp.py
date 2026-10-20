@@ -46,6 +46,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -105,6 +106,12 @@ class Config:
     concurrency: int = int(_env("LOCAL_CONCURRENCY", "2"))
     request_timeout: float = float(_env("LOCAL_REQUEST_TIMEOUT", "900"))
     max_output_tokens: int = int(_env("LOCAL_MAX_OUTPUT_TOKENS", "4096"))
+    # "low" | "medium" | "high"; empty leaves the model's default. Reasoning tokens count against
+    # max_tokens, so high effort can starve short map calls of an answer.
+    reasoning_effort: str = _env("LOCAL_REASONING_EFFORT", "")
+    # Override for the coder model ("none" turns Qwen3.5 thinking off; at codegen's low temperature
+    # it can otherwise loop until max_tokens).
+    reasoning_effort_coder: str = _env("LOCAL_REASONING_EFFORT_CODER", "")
     searxng_url: str = _env("SEARXNG_URL", "http://127.0.0.1:8888").rstrip("/")
     allowed_roots: tuple[Path, ...] = tuple(
         _expand_roots(_env("LOCAL_AGENT_ALLOWED_ROOTS", "~/src:~/data:~/Documents"))
@@ -113,6 +120,9 @@ class Config:
     max_files: int = int(_env("LOCAL_AGENT_MAX_FILES", "500"))
     opencode_bin: str = _env("OPENCODE_BIN", "opencode")
     opencode_model: str = _env("OPENCODE_MODEL", "lmstudio/qwen/qwen3-coder-30b")
+    # --standalone (OpenCode v2): a private server per task, so a timeout really stops the agent
+    # instead of leaving the session running in the shared background service. Empty for v1.
+    opencode_run_args: tuple[str, ...] = tuple(_env("OPENCODE_RUN_ARGS", "--standalone").split())
     allow_pandas_eval: bool = _env("LOCAL_AGENT_ALLOW_PANDAS_EVAL", "0") == "1"
     ledger_path: Path = Path(
         os.path.expanduser(_env("LOCAL_AGENT_LEDGER", "~/Library/Logs/local-agent-mcp/usage.jsonl"))
@@ -198,21 +208,36 @@ async def chat(
         "max_tokens": max_tokens or CFG.max_output_tokens,
         "stream": False,
     }
+    effort = (model == CFG.model_coder and CFG.reasoning_effort_coder) or CFG.reasoning_effort
+    if effort:
+        payload["reasoning_effort"] = effort
     headers = {"Authorization": f"Bearer {CFG.llm_api_key}"}
     t0 = time.monotonic()
-    async with _semaphore():
-        try:
-            r = await _client().post(f"{CFG.llm_base_url}/chat/completions", json=payload, headers=headers)
-        except httpx.ConnectError as e:
-            raise LocalLLMError(
-                f"Cannot reach local LLM server at {CFG.llm_base_url}. Is LM Studio's server running? "
-                f"(`lms server start`). Underlying error: {e}"
-            ) from e
-        except httpx.TimeoutException as e:
-            raise LocalLLMError(
-                f"Local model '{model}' timed out after {CFG.request_timeout}s. Try a smaller input, "
-                f"the fast model, or raise LOCAL_REQUEST_TIMEOUT."
-            ) from e
+    # When memory only fits one model, a JIT load of another model (e.g. OpenCode on the coder while
+    # we use the general one) can cancel our load or drop an in-flight request. Retry that once.
+    for attempt in (1, 2):
+        async with _semaphore():
+            try:
+                r = await _client().post(f"{CFG.llm_base_url}/chat/completions", json=payload, headers=headers)
+            except httpx.ConnectError as e:
+                raise LocalLLMError(
+                    f"Cannot reach local LLM server at {CFG.llm_base_url}. Is LM Studio's server running? "
+                    f"(`lms server start`). Underlying error: {e}"
+                ) from e
+            except httpx.TimeoutException as e:
+                raise LocalLLMError(
+                    f"Local model '{model}' timed out after {CFG.request_timeout}s. Try a smaller input, "
+                    f"the fast model, or raise LOCAL_REQUEST_TIMEOUT."
+                ) from e
+            except httpx.TransportError as e:
+                if attempt == 2:
+                    raise LocalLLMError(f"Local LLM dropped the request for '{model}' twice: {e}") from e
+                r = None
+        swapped = r is None or r.status_code >= 500 or (
+            r.status_code >= 400 and re.search(r"(?i)failed to load|cancel|unload|does not exist", r.text))
+        if not swapped or attempt == 2:
+            break
+        await asyncio.sleep(3)
     if r.status_code >= 400:
         raise LocalLLMError(
             f"Local LLM returned HTTP {r.status_code} for model '{model}': {r.text[:500]}. "
@@ -221,10 +246,18 @@ async def chat(
     data = r.json()
     _ledger(tool, model, data.get("usage") or {}, time.monotonic() - t0)
     try:
-        content = data["choices"][0]["message"].get("content") or ""
+        choice = data["choices"][0]
+        content = choice["message"].get("content") or ""
     except (KeyError, IndexError) as e:
         raise LocalLLMError(f"Unexpected response shape from local server: {str(data)[:500]}") from e
-    return _THINK_RE.sub("", content).strip()
+    if not content.strip() and choice.get("finish_reason") == "length":
+        # thinking models count hidden reasoning against max_tokens; an empty answer is not "NONE"
+        raise LocalLLMError(
+            f"Model '{model}' used its whole {payload['max_tokens']}-token budget on reasoning and "
+            f"returned no answer. Raise max_tokens or set LOCAL_REASONING_EFFORT=low (or none)."
+        )
+    # gpt-oss cites with 【...】; normalize so [file:Lx-y] / [n] citations look the same everywhere
+    return _THINK_RE.sub("", content).replace("【", "[").replace("】", "]").strip()
 
 
 def _model_for(kind: str, override: str | None) -> str:
@@ -371,7 +404,10 @@ async def map_reduce(docs: list[Doc], question: str, *, model: str, tool: str, m
         )
         return "" if res.strip().upper() == "NONE" else f"--- notes from [{label}] ---\n{res}"
 
-    notes = [n for n in await asyncio.gather(*(run(lbl, ch) for lbl, ch in jobs)) if n]
+    # First chunk alone: if the model is not loaded yet, concurrent requests would each trigger a
+    # JIT load, which LM Studio can fail with a 500. Then fan out.
+    first = await run(*jobs[0])
+    notes = [n for n in [first, *await asyncio.gather(*(run(lbl, ch) for lbl, ch in jobs[1:]))] if n]
     if not notes:
         return f"No relevant information found in {len(docs)} source(s) ({total:,} chars scanned)."
 
@@ -809,12 +845,19 @@ async def local_codegen(
 
 
 async def _run(cmd: list[str], cwd: Path, timeout: float) -> tuple[int, str]:
-    proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(cwd), stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.STDOUT)
+    # stdin must not be inherited: over stdio it is the MCP transport, and `opencode run` reads
+    # piped stdin into its prompt. PWD must match cwd: OpenCode picks its project directory from
+    # $PWD, so an inherited PWD sends the agent's edits to the server's directory, not the worktree.
+    proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(cwd), stdin=asyncio.subprocess.DEVNULL,
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                                                env={**os.environ, "PWD": str(cwd)}, start_new_session=True)
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)  # the whole group, so agent tool subprocesses die too
+        except ProcessLookupError:
+            pass
         await proc.wait()
         return 124, f"timed out after {timeout}s"
     return proc.returncode or 0, out.decode(errors="replace")
@@ -867,7 +910,8 @@ async def local_agent_task(
             except OSError:
                 pass
         t0 = time.monotonic()
-        code, out = await _run([oc, "run", "--model", model or CFG.opencode_model, task], workdir, timeout_s)
+        code, out = await _run([oc, "run", *CFG.opencode_run_args, "--model", model or CFG.opencode_model, task],
+                               workdir, timeout_s)
         _ledger("local_agent_task", model or CFG.opencode_model, {}, time.monotonic() - t0)
         _, stat = await _run(["git", "status", "--short"], workdir, 30)
         _, diffstat = await _run(["git", "diff", "--stat", "HEAD"], workdir, 30)

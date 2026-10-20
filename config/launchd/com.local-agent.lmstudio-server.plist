@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- LaunchAgent (user): start LM Studio's headless API server at login. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.local-agent.lmstudio-server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string><string>-lc</string>
+    <string>sleep 20; "$HOME/.lmstudio/bin/lms" server start --port 1234</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/tmp/lmstudio-server.log</string>
+  <key>StandardErrorPath</key><string>/tmp/lmstudio-server.log</string>
+</dict>
+</plist>

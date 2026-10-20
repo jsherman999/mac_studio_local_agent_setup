@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- LaunchDaemon (root): raise the GPU wired-memory cap at boot so large models fit.
+     Installed to /Library/LaunchDaemons by scripts/00-macos-prep.sh. 112000 MB leaves ~16 GB for macOS. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.local-agent.gpu-wired-limit</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/sbin/sysctl</string>
+    <string>iogpu.wired_limit_mb=__WIRED_MB__</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
