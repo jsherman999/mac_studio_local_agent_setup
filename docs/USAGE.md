@@ -259,8 +259,7 @@ opencode run "explain the top-level modules"     # one-shot, then exits
 opencode run -m lmstudio/openai/gpt-oss-120b "review the error handling in server.py"
 ```
 
-- **Which model:** **Ornith-1.5-35B** (the default) for editing and agent work. `qwen/qwen3-coder-30b`
-  is still on disk: it answers single prompts ~5× faster (no thinking) but scored lower in testing. Use
+- **Which model:** **Ornith-1.5-35B** (the default) for editing and agent work. Use
   **gpt-oss-120b** for reasoning and review. In the POC, the smaller gpt-oss-20b stopped early
   when used as an agent. The 120B has not been tested as an agent.
 - **Permissions** come from the ordered `permissions` list (native V2 format; the last matching
