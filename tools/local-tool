@@ -11,8 +11,10 @@ Call the local-agent MCP tools from the shell, without Claude Code.
     tools/local-tool local_ask prompt="Summarize RFC 9110 in 5 bullets"
     tools/local-tool local_summarize_files paths='["~/src/app/**/*.py"]' question="Where is auth?"
     tools/local-tool local_web_search query="mlx lm server" max_results=5
+    tools/local-tool what date is it?                       # = local_ask prompt="what date is it?"
 
-Arguments are key=value. A value that parses as JSON (lists, numbers, true/false) is passed as
+If the first word is not a tool name (local_*) or "list", all the words are joined and sent
+as local_ask's prompt. Arguments are key=value. A value that parses as JSON (lists, numbers, true/false) is passed as
 JSON; anything else is a string. --json '{...}' passes the whole argument object instead.
 The server is started over stdio exactly as Claude Code starts it, so it reads the same
 ~/.config/local-agent/local-agent.env and writes to the same usage ledger.
@@ -20,6 +22,7 @@ The server is started over stdio exactly as Claude Code starts it, so it reads t
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -44,19 +47,19 @@ def parse_args(argv: list[str]) -> dict:
     return args
 
 
-async def main() -> int:
+async def main(tool: str, args: dict) -> int:
     params = StdioServerParameters(command="uv", args=["run", "--quiet", "--script", str(SERVER)],
                                    env=dict(os.environ))
     async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
         await s.initialize()
-        if sys.argv[1] == "list":
+        if tool == "list":
             for t in (await s.list_tools()).tools:
                 props = t.input_schema.get("properties", {})
                 req = set(t.input_schema.get("required", []))
                 sig = ", ".join(p if p in req else f"[{p}]" for p in props)
                 print(f"{t.name}({sig})")
             return 0
-        res = await s.call_tool(sys.argv[1], parse_args(sys.argv[2:]))
+        res = await s.call_tool(tool, args)
         for c in res.content:
             print(getattr(c, "text", c))
         return 1 if res.is_error else 0
@@ -64,4 +67,8 @@ async def main() -> int:
 
 if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
     sys.exit(__doc__)
-sys.exit(asyncio.run(main()))
+if sys.argv[1] == "list" or re.fullmatch(r"local_\w+", sys.argv[1]):
+    tool, args = sys.argv[1], parse_args(sys.argv[2:])
+else:  # free text: the words are a prompt (kept a string, never JSON-parsed)
+    tool, args = "local_ask", {"prompt": " ".join(sys.argv[1:])}
+sys.exit(asyncio.run(main(tool, args)))

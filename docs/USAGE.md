@@ -96,11 +96,12 @@ Run `local_usage_report` at the end of a session to see how much work stayed loc
 `tools/local-tool` is a small MCP client. It starts the server the same way Claude Code does,
 so it uses the same config and the same usage ledger. Arguments are `key=value`. Values that
 parse as JSON (lists, numbers, `true`/`false`) are passed as JSON, and everything else is passed
-as a string. To pass the whole argument object at once, use `--json '{...}'`.
+as a string. To pass the whole argument object at once, use `--json '{...}'`. If the first word
+is not a tool name (`local_*`) or `list`, all the words are sent as the prompt to `local_ask`.
 
 ```bash
-cd ~/src/mac_studio_local_agent_setup
-alias lt="$PWD/tools/local-tool"          # optional
+# in ~/.zshrc. noglob keeps zsh from treating ? and * in a free-text prompt as file patterns
+alias lt="noglob $HOME/src/mac_studio_local_agent_setup/tools/local-tool"
 
 lt list                                   # every tool and its parameters
 lt local_status
@@ -109,6 +110,8 @@ lt local_status
 **Ask a model**
 
 ```bash
+lt what date is it?                       # free text = local_ask prompt="what date is it?"
+lt explain launchd KeepAlive vs RunAtLoad in 3 bullets
 lt local_ask prompt="Explain launchd KeepAlive vs RunAtLoad in 3 bullets"
 lt local_ask prompt="Write a regex for ISO-8601 dates" model_role=coder max_tokens=400
 lt local_ask system="You are terse." prompt="$(cat notes.txt) -- summarize in 5 bullets"
