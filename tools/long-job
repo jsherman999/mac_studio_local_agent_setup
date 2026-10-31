@@ -13,7 +13,7 @@
 # NOTIFY_EMAIL (email REPORT.md there via the Gmail connector when done).
 # Run it inside tmux (`tmux new -s job 'long-job ...'`) so it survives the SSH session.
 set -u
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:$HOME/.lmstudio/bin:$PATH"
 JOBS_DIR="${JOBS_DIR:-$HOME/data/jobs}"
 
 usage() { sed -n '2,15s/^# \{0,1\}//p' "$0"; exit 1; }
@@ -45,7 +45,8 @@ mkdir .lock 2>/dev/null || { echo "job '$1' is already running (remove $JOB/.loc
 trap 'rmdir "$JOB/.lock" 2>/dev/null' EXIT
 
 ALLOW=(Read Write Edit Glob Grep "mcp__local-agent__*"
-       "Bash(curl:*)" "Bash(python3:*)" "Bash(uv:*)" "Bash(jq:*)" "Bash(ls:*)" "Bash(wc:*)" "Bash(head:*)" "Bash(mkdir:*)")
+       "Bash(curl:*)" "Bash(python3:*)" "Bash(uv:*)" "Bash(jq:*)" "Bash(ls:*)" "Bash(wc:*)" "Bash(head:*)" "Bash(mkdir:*)"
+       "Bash(lms ls:*)" "Bash(lms ps:*)" "Bash(lms version)")   # read-only LM Studio inventory
 
 PROMPT="You are running one step of a long autonomous job. Work only inside $JOB.
 GOAL.md is the goal. PLAN.md is your checklist of '- [ ]' items (create it on the first run, then

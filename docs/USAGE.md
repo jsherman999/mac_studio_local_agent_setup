@@ -238,7 +238,7 @@ optional:
 
 Notes:
 - **Permissions:** the allowlist permits file edits, the local tools, `curl`, `python3`, `uv`,
-  `jq`, `ls`, `wc`, `head`, and `mkdir`. There is no `rm`, `sudo`, or `git`. Edit `ALLOW` in the
+  `jq`, `ls`, `wc`, `head`, `mkdir`, and read-only `lms ls`/`lms ps`. There is no `rm`, `sudo`, or `git`. Edit `ALLOW` in the
   script if a job needs more.
 - **Search rate limits:** SearXNG's upstream engines rate-limit heavy use. Goals that point at
   APIs or bulk downloads do better than goals that need hundreds of searches.
