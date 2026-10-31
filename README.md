@@ -50,7 +50,7 @@ flowchart LR
 |---|---|---|
 | LM Studio (MLX engine) | OpenAI-compatible server for local models | `:1234`, LaunchAgent |
 | General model (e.g. gpt-oss-120b) | Reading, synthesis, analysis | ~60–65 GB |
-| Coder model (e.g. Qwen3-Coder-30B MoE) | Codegen, agent tasks, fast extraction | ~17–32 GB depending on quant |
+| Coder model (Ornith-1.5-35B-A3B MoE, 4-bit MLX; was Qwen3-Coder-30B) | Codegen, agent tasks, fast extraction | ~19.5 GB |
 | SearXNG | Private metasearch with a JSON API | Podman, `127.0.0.1:8888` |
 | `local-agent` MCP server | 10 tools that wrap all of the above | `mcp_server/local_agent_mcp.py` |
 | OpenCode | Full local coding agent for `local_agent_task` | `~/.config/opencode/opencode.json` |
@@ -109,7 +109,7 @@ everything in order.
 | Item | Approx. GB |
 |---|---|
 | gpt-oss-120b (MXFP4/MLX) | 60–65 |
-| Qwen3-Coder-30B-A3B (8-bit) | ~32 (4-bit ~17) |
+| Ornith-1.5-35B-A3B (4-bit MLX) | ~19.5 (Qwen3-Coder-30B 4-bit was ~17) |
 | KV caches at 64k ctx | 8–15 |
 | macOS + apps + Podman VM | 16–20 |
 
@@ -250,6 +250,26 @@ Qwen3-Coder-30B 4-bit 16 GiB) with ~48% of RAM still free; `local_agent_task` fi
 add-function-plus-tests task in ~10–15 s. One run in five looped until the 900 s timeout, so
 keep reviewing its diffs. After a reboot, auto-login → lock → SearXNG → LM Studio with both
 models pinned → all 10 tools passing took ~2 minutes.
+
+### Coder model A/B: Ornith-1.5-35B vs Qwen3-Coder-30B (Studio, October 2026)
+
+Same harness for both: 6 codegen tasks × 3 and an sshd-log→JSON extraction × 3, scored by
+hidden tests, plus two OpenCode tasks (bug fix, feature + CLI) × 3 through `local_agent_task`,
+scored by hidden tests the agent never sees.
+
+| | Qwen3-Coder-30B (4-bit MLX) | Ornith-1.5-35B-A3B (4-bit MLX) |
+|---|---|---|
+| Codegen | 14/18 | **18/18** |
+| Extraction | 3/3 | 3/3 |
+| OpenCode tasks | 5/6 | **6/6** |
+| Tokens/s | 136 | 137 |
+| Seconds per codegen call | **2.2** | 10.5 (always thinks; `reasoning_effort: none` is ignored) |
+
+Ornith became the default coder. It is not in LM Studio's catalog, so `LOCAL_MODEL_CODER_SOURCE`
+gives `10-models.sh` its Hugging Face URL (a bare `owner/repo` is treated as a Hub artifact).
+Because Ornith always thinks, its hidden reasoning ate the 150-token budget of
+`local_research`'s query step and the call came back empty; `LOCAL_REASONING_RESERVE_CODER=2048`
+adds headroom to every coder/fast call. Small sample: a consistent edge, not proof of a large one.
 
 ## Using it
 

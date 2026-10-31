@@ -112,6 +112,10 @@ class Config:
     # Override for the coder model ("none" turns Qwen3.5 thinking off; at codegen's low temperature
     # it can otherwise loop until max_tokens).
     reasoning_effort_coder: str = _env("LOCAL_REASONING_EFFORT_CODER", "")
+    # Extra max_tokens for calls to the coder/fast model, for coders that always think (Ornith
+    # ignores reasoning_effort=none): their hidden reasoning counts against the small budgets of
+    # internal calls (research queries 150, eval 600, map 1200) and can starve the answer.
+    reasoning_reserve_coder: int = int(_env("LOCAL_REASONING_RESERVE_CODER", "0") or 0)
     searxng_url: str = _env("SEARXNG_URL", "http://127.0.0.1:8888").rstrip("/")
     allowed_roots: tuple[Path, ...] = tuple(
         _expand_roots(_env("LOCAL_AGENT_ALLOWED_ROOTS", "~/src:~/data:~/Documents"))
@@ -206,7 +210,8 @@ async def chat(
         "model": model,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens or CFG.max_output_tokens,
+        "max_tokens": (max_tokens or CFG.max_output_tokens)
+        + (CFG.reasoning_reserve_coder if model in (CFG.model_coder, CFG.model_fast) else 0),
         "stream": False,
     }
     effort = (model == CFG.model_coder and CFG.reasoning_effort_coder) or CFG.reasoning_effort

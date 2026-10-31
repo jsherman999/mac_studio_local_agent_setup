@@ -14,8 +14,13 @@ CODER=${CODER:-$(env_get LOCAL_MODEL_CODER)}
 CTX=${CTX:-$(env_get LOCAL_MODEL_CTX)}; CTX=${CTX:-65536}
 PRELOAD=${PRELOAD:-$(env_get LOCAL_MODEL_PRELOAD)}; PRELOAD=${PRELOAD:-both}
 
+GENERAL_SRC=$(env_get LOCAL_MODEL_GENERAL_SOURCE); CODER_SRC=$(env_get LOCAL_MODEL_CODER_SOURCE)
 for m in $(printf '%s\n' "$GENERAL" "$CODER" | awk '!seen[$0]++'); do
   if "$LMS" ls 2>/dev/null | grep -q "^$m "; then log "Already downloaded: $m"; continue; fi
+  # Models outside LM Studio's catalog: `lms get` treats owner/repo as a Hub artifact, so it
+  # needs the full Hugging Face URL.
+  src=""; [[ "$m" == "$GENERAL" ]] && src=$GENERAL_SRC; [[ "$m" == "$CODER" ]] && src=${CODER_SRC:-$src}
+  if [[ -n "$src" ]]; then log "Downloading $m from $src"; "$LMS" get "$src" -y; continue; fi
   # gpt-oss ships natively as MXFP4: the GGUF build is ~63 GB for 120b, while `--mlx` resolves
   # to an 8-bit MLX conversion (~124 GB) that cannot share the GPU with the coder model.
   case "$m" in openai/gpt-oss-*) FMT=--gguf ;; *) FMT=--mlx ;; esac

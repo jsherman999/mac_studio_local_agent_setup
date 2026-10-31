@@ -20,7 +20,7 @@ started keeps running.
 
 | Agent | Brings up | Listens on |
 |---|---|---|
-| `com.local-agent.lmstudio-server` | LM Studio API server, with **gpt-oss-120b** (63 GB, MXFP4 GGUF) and **qwen3-coder-30b** (17 GB, 4-bit MLX) pinned at 64k context | `127.0.0.1:1234`, localhost only |
+| `com.local-agent.lmstudio-server` | LM Studio API server, with **gpt-oss-120b** (63 GB, MXFP4 GGUF) and **Ornith-1.5-35B-A3B** (19.5 GB, 4-bit MLX) pinned at 64k context | `127.0.0.1:1234`, localhost only |
 | `com.local-agent.searxng` | Podman VM and the SearXNG container | `127.0.0.1:8888`, localhost only |
 | `com.local-agent.lock-at-login` | Locks the session 15 s after auto-login | — |
 
@@ -60,7 +60,7 @@ make verify                                              # check every layer
 | `local_agent_task` | `task, repo_path, [use_worktree], [timeout_s], [model]` | Running OpenCode in a new git worktree and branch |
 | `local_usage_report` | `[days]` | Tokens processed locally, grouped by tool |
 
-- `model_role` is `general` (gpt-oss-120b, the default), `coder`, or `fast` (both qwen3-coder).
+- `model_role` is `general` (gpt-oss-120b, the default), `coder`, or `fast` (both Ornith-1.5-35B; it always thinks briefly first, so single calls take ~10 s).
 - `time_range` is `day`, `week`, `month`, or `year`.
 - File tools only read under `LOCAL_AGENT_ALLOWED_ROOTS` (here `~/src:~/data:~/Documents:~/ccode`).
 
@@ -250,7 +250,7 @@ Notes:
 ## 3. With OpenCode alone
 
 OpenCode is configured in `~/.config/opencode/opencode.json`. It uses the LM Studio provider,
-defaults to `lmstudio/qwen/qwen3-coder-30b`, and never sees Anthropic credentials.
+defaults to `lmstudio/ornith-1.5-35b-a3b-mlx`, and never sees Anthropic credentials.
 
 ```bash
 cd ~/src/some-repo
@@ -259,7 +259,8 @@ opencode run "explain the top-level modules"     # one-shot, then exits
 opencode run -m lmstudio/openai/gpt-oss-120b "review the error handling in server.py"
 ```
 
-- **Which model:** **qwen3-coder** for editing and agent work (fast, reliable with tools);
+- **Which model:** **Ornith-1.5-35B** (the default) for editing and agent work. `qwen/qwen3-coder-30b`
+  is still on disk: it answers single prompts ~5× faster (no thinking) but scored lower in testing. Use
   **gpt-oss-120b** for reasoning and review. In the POC, the smaller gpt-oss-20b stopped early
   when used as an agent. The 120B has not been tested as an agent.
 - **Permissions** come from the ordered `permissions` list (native V2 format; the last matching
