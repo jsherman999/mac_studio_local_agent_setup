@@ -1,0 +1,95 @@
+#!/bin/bash
+# Run a long, goal-driven job: headless Claude Code (Opus) plans and judges, the local-agent MCP
+# tools do the bulk reading/analysis, and state lives in files so every run starts fresh.
+#
+#   long-job <name> "goal text"     start a job (later runs of the same name resume it)
+#   long-job <name>                 resume
+#   long-job status [<name>]        list jobs, or show one job's plan and recent progress
+#
+# Job dir: $JOBS_DIR/<name> (default ~/data/jobs, inside LOCAL_AGENT_ALLOWED_ROOTS) holding
+# GOAL.md, PLAN.md, PROGRESS.md, raw/, notes/, REPORT.md, runs.log. The loop ends when Claude
+# creates DONE or MAX_RUNS is reached. Env: MAX_RUNS (40), MAX_TURNS (60 per run),
+# RETRY_SLEEP (1200 s after a failed run, e.g. usage limit), MAX_FAILS (5 in a row),
+# NOTIFY_EMAIL (email REPORT.md there via the Gmail connector when done).
+# Run it inside tmux (`tmux new -s job 'long-job ...'`) so it survives the SSH session.
+set -u
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
+JOBS_DIR="${JOBS_DIR:-$HOME/data/jobs}"
+
+usage() { sed -n '2,15s/^# \{0,1\}//p' "$0"; exit 1; }
+[[ $# -ge 1 && "$1" != -h && "$1" != --help ]] || usage
+
+if [[ "$1" == status ]]; then
+  if [[ $# -lt 2 ]]; then
+    for d in "$JOBS_DIR"/*/; do
+      [[ -d "$d" ]] || continue
+      n=$(basename "$d"); done_=$(grep -c '^\s*- \[x\]' "$d/PLAN.md" 2>/dev/null); all=$(grep -c '^\s*- \[[ x]\]' "$d/PLAN.md" 2>/dev/null)
+      printf '%-24s %-8s plan %s/%s  %s\n' "$n" "$([[ -f $d/DONE ]] && echo done || ([[ -d $d/.lock ]] && echo running || echo stopped))" \
+        "${done_:-0}" "${all:-0}" "$(grep -c '^=== run' "$d/runs.log" 2>/dev/null || echo 0) runs"
+    done
+  else
+    d="$JOBS_DIR/$2"; [[ -d "$d" ]] || { echo "no job $2"; exit 1; }
+    echo "== GOAL"; cat "$d/GOAL.md"; echo; echo "== PLAN"; cat "$d/PLAN.md" 2>/dev/null
+    echo; echo "== PROGRESS (tail)"; tail -15 "$d/PROGRESS.md" 2>/dev/null
+    [[ -f "$d/DONE" ]] && echo && echo "DONE -> $d/REPORT.md"
+  fi
+  exit 0
+fi
+
+JOB="$JOBS_DIR/$1"; mkdir -p "$JOB"/{raw,notes}; cd "$JOB" || exit 1
+if [[ ! -f GOAL.md ]]; then
+  [[ $# -ge 2 ]] || { echo "first run of '$1' needs a goal: long-job $1 \"goal text\""; exit 1; }
+  printf '%s\n' "$2" > GOAL.md
+fi
+mkdir .lock 2>/dev/null || { echo "job '$1' is already running (remove $JOB/.lock if not)"; exit 1; }
+trap 'rmdir "$JOB/.lock" 2>/dev/null' EXIT
+
+ALLOW=(Read Write Edit Glob Grep "mcp__local-agent__*"
+       "Bash(curl:*)" "Bash(python3:*)" "Bash(uv:*)" "Bash(jq:*)" "Bash(ls:*)" "Bash(wc:*)" "Bash(head:*)" "Bash(mkdir:*)")
+
+PROMPT="You are running one step of a long autonomous job. Work only inside $JOB.
+GOAL.md is the goal. PLAN.md is your checklist of '- [ ]' items (create it on the first run, then
+keep it current; check items off as '- [x]'). PROGRESS.md is your log.
+This run: read those files, then do the next unchecked items. You have at most ${MAX_TURNS:-60}
+turns and the run is cut off when they are used up, so after each item you finish, check it off in
+PLAN.md and append a line to PROGRESS.md right away; never batch the bookkeeping to the end.
+- Save downloads under raw/. For bulk fetching write small curl/python scripts; prefer direct
+  APIs and data downloads over many search queries (search engines rate-limit).
+- Delegate reading and analysis to the local-agent tools: local_web_search, local_research,
+  local_web_fetch with a question, local_summarize_files over raw/ or notes/, local_analyze_data.
+  Read raw material yourself only when it is small. Spot-check claims the report will rely on.
+- Write findings to notes/.
+Before you stop, make sure PLAN.md is current and PROGRESS.md ends with a dated entry (done,
+failed, next).
+When the goal is fully met, write REPORT.md (answer, method, sources) and create an empty file
+named DONE. If the goal cannot be met, explain why in REPORT.md and still create DONE."
+
+fails=0
+for i in $(seq 1 "${MAX_RUNS:-40}"); do
+  [[ -f DONE ]] && break
+  echo "=== run $i $(date '+%F %T')" | tee -a runs.log
+  out=$(claude -p "$PROMPT" --allowedTools "${ALLOW[@]}" --max-turns "${MAX_TURNS:-60}" 2>&1); rc=$?
+  printf '%s\n' "$out" >> runs.log
+  # Using up the turn budget is a normal end of a run, not a failure: just start the next one.
+  if [[ $rc -eq 0 ]] || grep -q "Reached max turns" <<<"$out"; then
+    fails=0
+  else
+    fails=$((fails+1))
+    [[ $fails -ge ${MAX_FAILS:-5} ]] && { echo "$fails failed runs in a row; stopping (see runs.log)" | tee -a runs.log; exit 1; }
+    echo "run failed (usage limit?); retrying in ${RETRY_SLEEP:-1200}s" | tee -a runs.log
+    sleep "${RETRY_SLEEP:-1200}"
+  fi
+  tail -1 PROGRESS.md 2>/dev/null
+done
+
+if [[ -f DONE ]]; then
+  echo "DONE: $JOB/REPORT.md" | tee -a runs.log
+  if [[ -n "${NOTIFY_EMAIL:-}" ]]; then
+    claude -p "Read $JOB/REPORT.md and email it to $NOTIFY_EMAIL with the Gmail send_message tool, subject \
+\"long-job $1 done\", body = the report verbatim. Reply: sent." \
+      --allowedTools Read "mcp__claude_ai_Gmail__send_message" --max-turns 6 >> runs.log 2>&1
+  fi
+else
+  echo "stopped after ${MAX_RUNS:-40} runs without DONE; resume with: long-job $1" | tee -a runs.log
+  exit 2
+fi

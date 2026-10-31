@@ -249,8 +249,8 @@ models pinned → all 10 tools passing took ~2 minutes.
 ## Using it
 
 [docs/USAGE.md](docs/USAGE.md) covers what runs on the Studio and every way to use the local
-models: Claude Code, the command line (`tools/local-tool` and `claude -p`), OpenCode alone, and
-the raw API. Things to say to Claude Code:
+models: Claude Code, the command line (`tools/local-tool`, `claude -p`, and `tools/long-job` for
+long goal-driven jobs), OpenCode alone, and the raw API. Things to say to Claude Code:
 
 ```text
 Use local_summarize_files on ~/src/jump-server/**/*.py: where are SSH sessions opened and
@@ -331,6 +331,7 @@ claude/                         CLAUDE.md policy, subagent, Read hook + settings
 scripts/00..50-*.sh             phased, idempotent setup
 scripts/launchd/                start scripts the LaunchAgents run (retry, log, re-pin models)
 tools/local-tool                call any MCP tool from the shell (no Claude needed)
+tools/long-job                  goal-driven long job: looped headless Claude + local tools, state in files
 docs/USAGE.md                   what runs, and how to use it (Claude Code, CLI, OpenCode, API)
 tests/test_offline.py           mocked unit tests (no models needed)
 tests/smoke_stdio.py            live smoke test over stdio (status + one ask)

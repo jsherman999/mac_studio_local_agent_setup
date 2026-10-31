@@ -195,6 +195,58 @@ claude -p "..." --allowedTools "mcp__local-agent__*"
 This route is useful in cron jobs and scripts, where you want Opus to judge and verify the
 local output. Use `tools/local-tool` when you just want the local result.
 
+### c) Long-running jobs: `tools/long-job`
+
+Give it a goal and it works until the goal is met. Each run is a fresh headless Claude session,
+and the job's state lives in files, so context never bloats and the job survives crashes,
+reboots, and usage limits.
+
+```bash
+tmux new -s job   # so it keeps running after you disconnect (detach: Ctrl-b d; reattach: tmux attach -t job)
+NOTIFY_EMAIL=you@example.com tools/long-job fda-recalls "Collect all FDA medical-device recalls
+from 2025-2026, classify by failure type and manufacturer, and find trends. Done = REPORT.md
+with tables and sources."
+
+tools/long-job status                 # all jobs: running/stopped/done, plan progress, runs
+tools/long-job status fda-recalls     # goal, plan checklist, recent progress
+tools/long-job fda-recalls            # resume a stopped job (picks up from PLAN.md)
+```
+
+Each job has a directory, `~/data/jobs/<name>/` (set `JOBS_DIR` to change it):
+
+| File | Written by | Purpose |
+|---|---|---|
+| `GOAL.md` | you (first run) | The goal and what "done" means. You can edit it mid-job to steer. |
+| `PLAN.md` | Opus | Checklist of `- [ ]` items, checked off as they are done |
+| `PROGRESS.md` | Opus | Dated log: what was done, what failed, what's next |
+| `raw/`, `notes/` | Opus and scripts | Downloaded data; local-model summaries and analyses |
+| `REPORT.md`, `DONE` | Opus | The final answer; `DONE` ends the loop |
+| `runs.log` | `long-job` | Output of each run |
+
+Within each run, Opus does the next unchecked plan items. It writes small curl or Python
+scripts for bulk downloads, delegates reading and analysis to the `local_*` tools, spot-checks
+claims the report relies on, and updates the plan and log before it stops. Settings, all
+optional:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MAX_RUNS` | 40 | Runs before stopping without `DONE` |
+| `MAX_TURNS` | 60 | Turns per run |
+| `RETRY_SLEEP` | 1200 | Seconds to wait after a failed run (for example, a usage limit) |
+| `MAX_FAILS` | 5 | Consecutive failed runs before giving up |
+| `NOTIFY_EMAIL` | (none) | Email `REPORT.md` here through the Gmail connector when done |
+
+Notes:
+- **Permissions:** the allowlist permits file edits, the local tools, `curl`, `python3`, `uv`,
+  `jq`, `ls`, `wc`, `head`, and `mkdir`. There is no `rm`, `sudo`, or `git`. Edit `ALLOW` in the
+  script if a job needs more.
+- **Search rate limits:** SearXNG's upstream engines rate-limit heavy use. Goals that point at
+  APIs or bulk downloads do better than goals that need hundreds of searches.
+- **Usage:** jobs still use your Claude subscription. The local tools are what keep Opus's share
+  small, and failed runs (such as hitting the usage limit) wait and retry.
+- **Surviving reboots:** to restart a job after a reboot, start `long-job <name>` from a
+  one-shot LaunchAgent.
+
 ## 3. With OpenCode alone
 
 OpenCode is configured in `~/.config/opencode/opencode.json`. It uses the LM Studio provider,
