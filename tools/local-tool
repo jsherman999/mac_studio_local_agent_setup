@@ -1,0 +1,67 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["mcp>=2.3,<3"]
+# ///
+"""
+Call the local-agent MCP tools from the shell, without Claude Code.
+
+    tools/local-tool list                                   # tools and their parameters
+    tools/local-tool local_status
+    tools/local-tool local_ask prompt="Summarize RFC 9110 in 5 bullets"
+    tools/local-tool local_summarize_files paths='["~/src/app/**/*.py"]' question="Where is auth?"
+    tools/local-tool local_web_search query="mlx lm server" max_results=5
+
+Arguments are key=value. A value that parses as JSON (lists, numbers, true/false) is passed as
+JSON; anything else is a string. --json '{...}' passes the whole argument object instead.
+The server is started over stdio exactly as Claude Code starts it, so it reads the same
+~/.config/local-agent/local-agent.env and writes to the same usage ledger.
+"""
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+SERVER = Path(__file__).resolve().parent.parent / "mcp_server" / "local_agent_mcp.py"
+
+
+def parse_args(argv: list[str]) -> dict:
+    if argv[:1] == ["--json"]:
+        return json.loads(argv[1])
+    args = {}
+    for a in argv:
+        key, sep, val = a.partition("=")
+        if not sep:
+            sys.exit(f"bad argument {a!r}: expected key=value")
+        try:
+            args[key] = json.loads(val)
+        except json.JSONDecodeError:
+            args[key] = val
+    return args
+
+
+async def main() -> int:
+    params = StdioServerParameters(command="uv", args=["run", "--quiet", "--script", str(SERVER)],
+                                   env=dict(os.environ))
+    async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
+        await s.initialize()
+        if sys.argv[1] == "list":
+            for t in (await s.list_tools()).tools:
+                props = t.input_schema.get("properties", {})
+                req = set(t.input_schema.get("required", []))
+                sig = ", ".join(p if p in req else f"[{p}]" for p in props)
+                print(f"{t.name}({sig})")
+            return 0
+        res = await s.call_tool(sys.argv[1], parse_args(sys.argv[2:]))
+        for c in res.content:
+            print(getattr(c, "text", c))
+        return 1 if res.is_error else 0
+
+
+if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+    sys.exit(__doc__)
+sys.exit(asyncio.run(main()))
