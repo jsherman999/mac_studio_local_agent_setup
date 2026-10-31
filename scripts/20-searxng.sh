@@ -25,9 +25,7 @@ podman run -d --name searxng --restart=always \
   docker.io/searxng/searxng:latest
 
 if [[ "$INSTALL_LAUNCH_AGENTS" == 1 ]]; then
-  mkdir -p "$HOME/Library/LaunchAgents"
-  cp "$REPO_ROOT/config/launchd/com.local-agent.searxng.plist" "$HOME/Library/LaunchAgents/"
-  launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.local-agent.searxng.plist" 2>/dev/null || true
+  install_agent com.local-agent.searxng
 fi
 
 log "Waiting for SearXNG"

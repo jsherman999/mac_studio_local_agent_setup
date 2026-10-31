@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- LaunchAgent (user): with auto-login enabled (so the services come back after a power loss),
+     blank the display shortly after login so the session locks. Locks only if the screen-lock
+     delay is "immediate": sysadminctl -screenLock immediate -password -
+     Installed by scripts/00-macos-prep.sh; the other LaunchAgents keep running while locked. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.local-agent.lock-at-login</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string><string>-c</string>
+    <string>sleep 15; /usr/bin/pmset displaysleepnow</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/local-agent-mcp/lock-at-login.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/local-agent-mcp/lock-at-login.log</string>
+</dict>
+</plist>

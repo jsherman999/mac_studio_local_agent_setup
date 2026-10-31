@@ -90,11 +90,19 @@ everything in order.
 - [ ] Raise the GPU wired-memory limit (`iogpu.wired_limit_mb`) to total RAM minus 16 GB, and
       persist it with a LaunchDaemon.
 - [ ] Set `pmset`: no sleep on AC, wake-on-LAN, auto-restart after power loss.
+- [ ] Install the lock-at-login LaunchAgent. The login agents only run in a logged-in session,
+      so for the Studio to recover from a power loss by itself, turn FileVault off
+      (`sudo fdesetup disable`), enable auto-login (System Settings > Users & Groups), and set
+      `sysadminctl -screenLock immediate -password -` so this agent locks the session right
+      after login.
 - [ ] Open LM Studio once in the GUI to finish first-run setup.
 
 ### Phase 2: Models: `make models`
-- [ ] Download the general and coder models as MLX builds.
-- [ ] Start the API server on `:1234` and install the login LaunchAgent.
+- [ ] Download the models: gpt-oss as its native MXFP4 GGUF, the coder as MLX.
+- [ ] Set LM Studio's JIT default context, stop it auto-loading its bundled model, and (with
+      both models preloaded) stop JIT loads of one role from evicting the other.
+- [ ] Start the API server on `:1234` and install the login LaunchAgent, which re-pins both
+      models after every reboot.
 - [ ] In LM Studio's server settings, enable JIT loading and auto-unload, and keep LAN serving **off**.
 - [ ] Check memory. Rough budget for running both models with 64k context:
 
@@ -202,8 +210,8 @@ uv run --script tests/live_e2e.py --skip-agent  # without the OpenCode task
 - `local_agent_task` ran OpenCode with the MCP server's stdin and `$PWD`. OpenCode v2 picks
   its project directory from `$PWD`, so the agent edited the directory Claude Code was started
   in instead of the worktree, and could read MCP protocol bytes as prompt. It now gets
-  `stdin=/dev/null`, `PWD=<worktree>`, its own process group, and `--standalone`
-  (`OPENCODE_RUN_ARGS`) so a timeout really stops the agent.
+  `stdin=/dev/null`, `PWD=<worktree>`, and its own process group, so a timeout really stops
+  the agent. (`--standalone` via `OPENCODE_RUN_ARGS` is only for OpenCode v2; see below.)
 - JIT reloads used LM Studio's 8k default context, not the 64k given to `lms load`.
 - Concurrent first requests to an unloaded model can 500 during the JIT load; map-reduce now
   sends the first chunk alone, and `chat()` retries once on 5xx or swap/cancel errors.
@@ -212,6 +220,31 @@ uv run --script tests/live_e2e.py --skip-agent  # without the OpenCode task
   (total − 16 GB); it now reserves 8 GB there.
 
 When the Studio arrives: `make all` there (with `FORCE_ENV=1` if you copied this config over).
+
+### Fixes found while installing the Studio (M5 Max, 128 GB, October 2026)
+
+- `lms get openai/gpt-oss-120b --mlx` resolves to an 8-bit MLX conversion (124 GB) that cannot
+  share the GPU with the coder. `10-models.sh` now fetches gpt-oss as its native MXFP4 GGUF
+  (63 GB). Cancelling `lms get` does not cancel the job in LM Studio's service: quit LM Studio
+  and remove the job from `~/.lmstudio/.internal/download-jobs-info.json`, or it keeps
+  downloading in the background.
+- A large download can hang at "Finalizing download..." with the weights complete; re-running
+  the same `lms get` only fetches the small manifest and registers the model.
+- OpenCode 1.19.x (the current release) rejects `--standalone`, so `local_agent_task` failed
+  outright. `OPENCODE_RUN_ARGS` now defaults to empty; 1.x `run` already starts a private server.
+- The LaunchAgents logged to `/tmp`, tried once after a fixed sleep, and on re-run kept the old
+  plist loaded. They now run `scripts/launchd/*-start.sh` (retrying, logging to
+  `~/Library/Logs/local-agent-mcp/`), are re-run by launchd until they succeed, and are
+  reinstalled with bootout + bootstrap. They also need `AbandonProcessGroup`: without it launchd
+  kills the Podman VM (or an LM Studio the script launched) as soon as the start script exits.
+- After a reboot the models were only JIT-loaded on first request; the LM Studio agent now
+  re-pins both at `LOCAL_MODEL_CTX`.
+
+Measured on the Studio: both models pinned at 64k context use ~75 GB (gpt-oss-120b 59 GiB,
+Qwen3-Coder-30B 4-bit 16 GiB) with ~48% of RAM still free; `local_agent_task` finishes the
+add-function-plus-tests task in ~10–15 s. One run in five looped until the 900 s timeout, so
+keep reviewing its diffs. After a reboot, auto-login → lock → SearXNG → LM Studio with both
+models pinned → all 10 tools passing took ~2 minutes.
 
 ## Using it
 
@@ -276,6 +309,9 @@ there, or sync them (`git`, `mutagen`, or `rsync`).
 | Very slow map-reduce | Lower `LOCAL_CHUNK_CHARS`, use `model_role="fast"`, narrow the globs |
 | Out-of-memory or swapping | Use the 4-bit coder, a shorter `--context-length`, or rely on JIT auto-unload |
 | `/mcp` shows failed | Run `uv run --script tests/smoke_stdio.py` to see the server's stderr |
+| Service down after a reboot | Check `~/Library/Logs/local-agent-mcp/{lmstudio-server,searxng-agent}.log` and `launchctl print gui/$(id -u)/com.local-agent.<name>`; restart with `launchctl kickstart -k gui/$(id -u)/com.local-agent.<name>` |
+| `local_agent_task` exits at once with an OpenCode usage error | OpenCode 1.x; set `OPENCODE_RUN_ARGS=` (empty) in `local-agent.env` |
+| `lms get` stuck at "Finalizing download..." | Re-run the same `lms get`; it fetches only the missing manifest |
 
 ## Roadmap (optional next steps)
 

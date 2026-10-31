@@ -32,4 +32,12 @@ sudo launchctl bootstrap system "$PL" 2>/dev/null || true
 log "Power: never sleep on AC (server role), wake on network"
 sudo pmset -c sleep 0 disksleep 0 womp 1 autorestart 1
 
+# The login agents only run in a logged-in session, so after a power loss the Studio needs
+# auto-login (FileVault off; System Settings > Users & Groups). This agent then locks the session
+# right after login; the lock needs the screen-lock delay at "immediate".
+log "Lock-at-login agent (takes effect at next login)"
+install_agent com.local-agent.lock-at-login next-login
+sysadminctl -screenLock status 2>&1 | grep -q immediate \
+  || warn "Screen lock is delayed; for lock-at-login run: sysadminctl -screenLock immediate -password -"
+
 log "Done. Open LM Studio once (GUI) to finish first-run, then run 10-models.sh"
