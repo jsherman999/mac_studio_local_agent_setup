@@ -143,7 +143,7 @@ lt local_analyze_data path=~/data/auth.parquet question="Which hosts have the mo
 lt local_web_search query="mlx-lm server continuous batching" max_results=5
 lt local_web_search query="macOS 27 release notes" categories=news time_range=week
 lt local_web_fetch url=https://lmstudio.ai/docs/cli question="How do I set a model's TTL?"
-lt local_research question="What changed in OpenCode 1.19?" max_sources=4 time_range=month
+lt local_research question="What changed in OpenCode 2.2?" max_sources=4 time_range=month
 lt local_research question="Compare SearXNG and Whoogle for self-hosting" \
    queries='["searxng vs whoogle","self-hosted metasearch 2026"]'
 ```
@@ -262,8 +262,12 @@ opencode run -m lmstudio/openai/gpt-oss-120b "review the error handling in serve
 - **Which model:** **qwen3-coder** for editing and agent work (fast, reliable with tools);
   **gpt-oss-120b** for reasoning and review. In the POC, the smaller gpt-oss-20b stopped early
   when used as an agent. The 120B has not been tested as an agent.
-- **Permissions** come from the `permission` block. Edits and most shell commands are allowed.
-  `git push`, `git remote`, `git reset --hard`, `sudo`, `rm -rf /`, and `curl | sh` are denied.
+- **Permissions** come from the ordered `permissions` list (native V2 format; the last matching
+  rule wins, so the denies come after the broad allow). Edits and most shell commands are
+  allowed. `git push`, `git remote`, `git reset --hard`, `sudo`, `rm -rf /`, and piping into a bare
+  `sh`/`bash`/`zsh` are denied. Keep new denies below the allow, or they will not take effect.
+- **Version:** OpenCode v2 (`opencode --version`). `opencode run --standalone` uses a private
+  server; without it, runs share OpenCode's background service.
 - **Commit first.** OpenCode edits the working copy directly. Commit before you start, or work
   in a throwaway worktree (`git worktree add ../try -b try`). `local_agent_task` does this for
   you.

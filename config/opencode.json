@@ -1,10 +1,10 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "provider": {
+  "providers": {
     "lmstudio": {
-      "npm": "@ai-sdk/openai-compatible",
       "name": "LM Studio (Mac Studio)",
-      "options": { "baseURL": "http://127.0.0.1:1234/v1" },
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": { "baseURL": "http://127.0.0.1:1234/v1" },
       "models": {
         "qwen/qwen3-coder-30b": { "name": "Qwen3 Coder 30B (local)" },
         "openai/gpt-oss-120b": { "name": "gpt-oss 120B (local)" }
@@ -12,20 +12,19 @@
     }
   },
   "model": "lmstudio/qwen/qwen3-coder-30b",
-  "small_model": "lmstudio/qwen/qwen3-coder-30b",
-  "share": "disabled",
-  "autoupdate": false,
-  "permission": {
-    "edit": "allow",
-    "webfetch": "allow",
-    "bash": {
-      "git push*": "deny",
-      "git remote*": "deny",
-      "git reset --hard*": "deny",
-      "rm -rf /*": "deny",
-      "sudo *": "deny",
-      "curl *| *sh*": "deny",
-      "*": "allow"
-    }
-  }
+  "agents": { "title": { "model": "lmstudio/qwen/qwen3-coder-30b" } },
+  "update": "disable",
+  "permissions": [
+    { "action": "*", "resource": "*", "effect": "allow" },
+    { "action": "shell", "resource": "git push *", "effect": "deny" },
+    { "action": "shell", "resource": "git remote *", "effect": "deny" },
+    { "action": "shell", "resource": "git reset --hard *", "effect": "deny" },
+    { "action": "shell", "resource": "rm -rf /", "effect": "deny" },
+    { "action": "shell", "resource": "rm -rf / *", "effect": "deny" },
+    { "action": "shell", "resource": "rm -rf ~", "effect": "deny" },
+    { "action": "shell", "resource": "sudo *", "effect": "deny" },
+    { "action": "shell", "resource": "sh", "effect": "deny" },
+    { "action": "shell", "resource": "bash", "effect": "deny" },
+    { "action": "shell", "resource": "zsh", "effect": "deny" }
+  ]
 }

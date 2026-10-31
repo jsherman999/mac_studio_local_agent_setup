@@ -122,7 +122,7 @@ everything in order.
 - [ ] Install a LaunchAgent that starts the VM and container at login.
 
 ### Phase 4: Local worker harness: `make opencode`
-- [ ] Install OpenCode and point it at the LM Studio provider (`config/opencode.json`).
+- [ ] Install OpenCode v2 and point it at the LM Studio provider (`config/opencode.json`, native V2 format).
 - [ ] Use the bash permissions in that config: they allow most commands but deny `git push`,
       `git remote`, `reset --hard`, `sudo`, and `curl | sh`.
 
@@ -211,7 +211,7 @@ uv run --script tests/live_e2e.py --skip-agent  # without the OpenCode task
   its project directory from `$PWD`, so the agent edited the directory Claude Code was started
   in instead of the worktree, and could read MCP protocol bytes as prompt. It now gets
   `stdin=/dev/null`, `PWD=<worktree>`, and its own process group, so a timeout really stops
-  the agent. (`--standalone` via `OPENCODE_RUN_ARGS` is only for OpenCode v2; see below.)
+  the agent, plus `--standalone` (`OPENCODE_RUN_ARGS`, OpenCode v2) for a private server per task.
 - JIT reloads used LM Studio's 8k default context, not the 64k given to `lms load`.
 - Concurrent first requests to an unloaded model can 500 during the JIT load; map-reduce now
   sends the first chunk alone, and `chat()` retries once on 5xx or swap/cancel errors.
@@ -230,8 +230,13 @@ When the Studio arrives: `make all` there (with `FORCE_ENV=1` if you copied this
   downloading in the background.
 - A large download can hang at "Finalizing download..." with the weights complete; re-running
   the same `lms get` only fetches the small manifest and registers the model.
-- OpenCode 1.19.x (the current release) rejects `--standalone`, so `local_agent_task` failed
-  outright. `OPENCODE_RUN_ARGS` now defaults to empty; 1.x `run` already starts a private server.
+- OpenCode moved to v2. The `sst/tap` formula and npm `opencode-ai` still ship v1 (1.19.x),
+  which rejects `--standalone`. `30-opencode.sh` now installs v2 (`anomalyco/tap/opencode-v2`,
+  npm `@opencode/cli`) and writes a native V2 `opencode.json`.
+- **V2 silently bypassed the V1 bash deny rules.** V2 still reads V1 config, but converts it to an
+  ordered list where the last match wins, so the V1 catch-all `"*": "allow"` (last in the map)
+  overrode every deny, and `git remote add` ran. The native V2 config puts the allow first and the
+  denies after it; verified that `git push`, `git remote`, `sudo`, and `curl | sh` are refused.
 - The LaunchAgents logged to `/tmp`, tried once after a fixed sleep, and on re-run kept the old
   plist loaded. They now run `scripts/launchd/*-start.sh` (retrying, logging to
   `~/Library/Logs/local-agent-mcp/`), are re-run by launchd until they succeed, and are
@@ -312,7 +317,8 @@ there, or sync them (`git`, `mutagen`, or `rsync`).
 | Out-of-memory or swapping | Use the 4-bit coder, a shorter `--context-length`, or rely on JIT auto-unload |
 | `/mcp` shows failed | Run `uv run --script tests/smoke_stdio.py` to see the server's stderr |
 | Service down after a reboot | Check `~/Library/Logs/local-agent-mcp/{lmstudio-server,searxng-agent}.log` and `launchctl print gui/$(id -u)/com.local-agent.<name>`; restart with `launchctl kickstart -k gui/$(id -u)/com.local-agent.<name>` |
-| `local_agent_task` exits at once with an OpenCode usage error | OpenCode 1.x; set `OPENCODE_RUN_ARGS=` (empty) in `local-agent.env` |
+| `local_agent_task` exits at once with an OpenCode usage error | OpenCode 1.x is installed (rejects `--standalone`): rerun `make opencode` to move to v2, or set `OPENCODE_RUN_ARGS=` (empty) |
+| OpenCode runs commands the config should deny | A V1-format `permission` block under V2 (last match wins). Use the native V2 `permissions` list from `config/opencode.json`, with denies after the allow |
 | `lms get` stuck at "Finalizing download..." | Re-run the same `lms get`; it fetches only the missing manifest |
 
 ## Roadmap (optional next steps)
