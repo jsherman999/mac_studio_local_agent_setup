@@ -16,19 +16,27 @@ PRELOAD=${PRELOAD:-$(env_get LOCAL_MODEL_PRELOAD)}; PRELOAD=${PRELOAD:-both}
 
 for m in $(printf '%s\n' "$GENERAL" "$CODER" | awk '!seen[$0]++'); do
   if "$LMS" ls 2>/dev/null | grep -q "^$m "; then log "Already downloaded: $m"; continue; fi
-  log "Downloading $m (MLX if available)"
-  "$LMS" get "$m" --mlx -y || "$LMS" get "$m" -y
+  # gpt-oss ships natively as MXFP4: the GGUF build is ~63 GB for 120b, while `--mlx` resolves
+  # to an 8-bit MLX conversion (~124 GB) that cannot share the GPU with the coder model.
+  case "$m" in openai/gpt-oss-*) FMT=--gguf ;; *) FMT=--mlx ;; esac
+  log "Downloading $m (${FMT#--} if available)"
+  "$LMS" get "$m" "$FMT" -y || "$LMS" get "$m" -y
 done
 
 # JIT loads (first request, or after the idle TTL unloads a model) use LM Studio's default
 # context length, not the one passed to `lms load`. Set it, or reloaded models silently get 4-8k.
+# Also: don't auto-load the bundled starter model, and when both roles fit (PRELOAD=both) don't
+# let a JIT load of one role evict the other.
 ST="$HOME/.lmstudio/settings.json"
-if [[ -f "$ST" ]] && [[ "$(jq -r '.defaultContextLength.value // 0' "$ST")" != "$CTX" ]]; then
-  log "LM Studio default context for JIT loads -> $CTX tokens (restarting server)"
+UNLOAD_PREV=$([[ "$PRELOAD" == both ]] && echo false || echo true)
+LMS_SETTINGS='.defaultContextLength = {type: "custom", value: $n} | .autoLoadBundledLLM = false
+              | .developer.unloadPreviousJITModelOnLoad = $u'
+if [[ -f "$ST" ]] && ! jq -e --argjson n "$CTX" --argjson u "$UNLOAD_PREV" ". == ($LMS_SETTINGS)" "$ST" >/dev/null; then
+  log "LM Studio settings: JIT context $CTX, no bundled model, unloadPreviousJIT=$UNLOAD_PREV (restarting server)"
   "$LMS" server stop >/dev/null 2>&1 || true
   osascript -e 'quit app "LM Studio"' >/dev/null 2>&1 || true
   sleep 3
-  jq --argjson n "$CTX" '.defaultContextLength = {type: "custom", value: $n}' "$ST" > "$ST.tmp" && mv "$ST.tmp" "$ST"
+  jq --argjson n "$CTX" --argjson u "$UNLOAD_PREV" "$LMS_SETTINGS" "$ST" > "$ST.tmp" && mv "$ST.tmp" "$ST"
 fi
 
 log "Starting API server on :$LLM_PORT"
@@ -56,11 +64,8 @@ fi
 "$LMS" ps || true
 
 if [[ "$INSTALL_LAUNCH_AGENTS" == 1 ]]; then
-  log "Install login agent for the server"
-  mkdir -p "$HOME/Library/LaunchAgents"
-  sed "s/--port 1234/--port ${LLM_PORT}/" "$REPO_ROOT/config/launchd/com.local-agent.lmstudio-server.plist" \
-    > "$HOME/Library/LaunchAgents/com.local-agent.lmstudio-server.plist"
-  launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.local-agent.lmstudio-server.plist" 2>/dev/null || true
+  log "Install login agent for the server (log: ~/Library/Logs/local-agent-mcp/lmstudio-server.log)"
+  install_agent com.local-agent.lmstudio-server
 else
   log "Skipping login agent (INSTALL_LAUNCH_AGENTS=0); re-run this script after a reboot"
 fi

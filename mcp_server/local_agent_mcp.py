@@ -121,8 +121,9 @@ class Config:
     opencode_bin: str = _env("OPENCODE_BIN", "opencode")
     opencode_model: str = _env("OPENCODE_MODEL", "lmstudio/qwen/qwen3-coder-30b")
     # --standalone (OpenCode v2): a private server per task, so a timeout really stops the agent
-    # instead of leaving the session running in the shared background service. Empty for v1.
-    opencode_run_args: tuple[str, ...] = tuple(_env("OPENCODE_RUN_ARGS", "--standalone").split())
+    # instead of leaving the session running in the shared background service. Empty for v1
+    # (the current release; 1.19.x rejects the flag and `run` already starts a private server).
+    opencode_run_args: tuple[str, ...] = tuple(_env("OPENCODE_RUN_ARGS", "").split())
     allow_pandas_eval: bool = _env("LOCAL_AGENT_ALLOW_PANDAS_EVAL", "0") == "1"
     ledger_path: Path = Path(
         os.path.expanduser(_env("LOCAL_AGENT_LEDGER", "~/Library/Logs/local-agent-mcp/usage.jsonl"))

@@ -1,16 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- LaunchAgent (user): start LM Studio's headless API server at login. -->
+<!-- LaunchAgent (user): start LM Studio's headless API server at login and pin the models.
+     __REPO__ and __HOME__ are filled in by scripts/10-models.sh. launchd re-runs the start
+     script (at most once a minute) until it exits 0. AbandonProcessGroup: without it launchd
+     kills everything the script started (the Podman VM, or an LM Studio it launched) on exit. -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.local-agent.lmstudio-server</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/zsh</string><string>-lc</string>
-    <string>sleep 20; "$HOME/.lmstudio/bin/lms" server start --port 1234</string>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/launchd/lmstudio-start.sh</string>
   </array>
   <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>/tmp/lmstudio-server.log</string>
-  <key>StandardErrorPath</key><string>/tmp/lmstudio-server.log</string>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>60</integer>
+  <key>AbandonProcessGroup</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/local-agent-mcp/lmstudio-server.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/local-agent-mcp/lmstudio-server.log</string>
 </dict>
 </plist>

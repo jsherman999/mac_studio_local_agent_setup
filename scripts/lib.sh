@@ -20,3 +20,17 @@ url_port() { sed -E 's#^[a-z]+://[^:/]+:([0-9]+).*#\1#' <<<"$1"; }
 LLM_PORT="$(url_port "$(env_get LOCAL_LLM_BASE_URL)")"
 SEARXNG_PORT="$(url_port "$(env_get SEARXNG_URL)")"
 INSTALL_LAUNCH_AGENTS="${INSTALL_LAUNCH_AGENTS:-1}"
+
+# Install config/launchd/<label>.plist as a user LaunchAgent (filling __REPO__/__HOME__) and
+# (re)load it. bootout first so a changed plist actually replaces the loaded one. With a second
+# argument "next-login", only write the plist (loading it would run it now).
+install_agent() {
+  local label="$1" dest="$HOME/Library/LaunchAgents/$1.plist"
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/local-agent-mcp"
+  sed -e "s#__REPO__#${REPO_ROOT}#g" -e "s#__HOME__#${HOME}#g" \
+    "$REPO_ROOT/config/launchd/$label.plist" > "$dest"
+  plutil -lint -s "$dest" || die "bad plist: $dest"
+  [[ "${2:-}" == next-login ]] && return 0
+  launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$dest" || warn "launchctl bootstrap $label failed"
+}
