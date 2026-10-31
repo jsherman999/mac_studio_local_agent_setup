@@ -21,6 +21,10 @@ for _ in $(seq 1 18); do
 done
 "$LMS" server status 2>&1 | grep -q running || { echo "server did not start"; exit 1; }
 
+# LM Studio does not always recreate its temp dir when its service starts fresh, and GGUF loads
+# then fail with "ENOENT ... mkdtemp ~/.lmstudio/.internal/temp/lmstudio-chat-template-*".
+mkdir -p "$HOME/.lmstudio/.internal/temp"
+
 case "$PRELOAD" in
   both)    LOAD="$GENERAL $CODER" ;;
   general) LOAD="$GENERAL" ;;
