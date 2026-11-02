@@ -10,13 +10,15 @@
 # GOAL.md, PLAN.md, PROGRESS.md, raw/, notes/, REPORT.md, runs.log. The loop ends when Claude
 # creates DONE or MAX_RUNS is reached. Env: MAX_RUNS (40), MAX_TURNS (60 per run),
 # RETRY_SLEEP (1200 s after a failed run, e.g. usage limit), MAX_FAILS (5 in a row),
-# NOTIFY_EMAIL (email REPORT.md there via the Gmail connector when done).
+# NOTIFY_EMAIL (email REPORT.md there via the Gmail connector when done), EXTRA_ALLOW
+# (extra semicolon-separated --allowedTools entries, e.g. 'Bash(npm test:*)'), ADD_DIRS
+# (colon-separated dirs outside the job dir that Claude may edit, e.g. a repo).
 # Run it inside tmux (`tmux new -s job 'long-job ...'`) so it survives the SSH session.
 set -u
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$HOME/.lmstudio/bin:$PATH"
 JOBS_DIR="${JOBS_DIR:-$HOME/data/jobs}"
 
-usage() { sed -n '2,15s/^# \{0,1\}//p' "$0"; exit 1; }
+usage() { sed -n '2,16s/^# \{0,1\}//p' "$0"; exit 1; }
 [[ $# -ge 1 && "$1" != -h && "$1" != --help ]] || usage
 
 if [[ "$1" == status ]]; then
@@ -47,8 +49,13 @@ trap 'rmdir "$JOB/.lock" 2>/dev/null' EXIT
 ALLOW=(Read Write Edit Glob Grep "mcp__local-agent__*"
        "Bash(curl:*)" "Bash(python3:*)" "Bash(uv:*)" "Bash(jq:*)" "Bash(ls:*)" "Bash(wc:*)" "Bash(head:*)" "Bash(mkdir:*)"
        "Bash(lms ls:*)" "Bash(lms ps:*)" "Bash(lms version)")   # read-only LM Studio inventory
+# EXTRA_ALLOW: semicolon-separated extra --allowedTools entries for this job, e.g. a project's test
+# command: EXTRA_ALLOW='Bash(npm run data:*);Bash(npm test:*)'
+if [[ -n "${EXTRA_ALLOW:-}" ]]; then IFS=";" read -r -a _extra <<<"$EXTRA_ALLOW"; ALLOW+=("${_extra[@]}"); fi
+# ADD_DIRS: colon-separated directories outside the job dir that Claude may edit (e.g. a repo).
+DIRS=(); if [[ -n "${ADD_DIRS:-}" ]]; then IFS=":" read -r -a _d <<<"$ADD_DIRS"; for x in "${_d[@]}"; do DIRS+=(--add-dir "$x"); done; fi
 
-PROMPT="You are running one step of a long autonomous job. Work only inside $JOB.
+PROMPT="You are running one step of a long autonomous job. Work only inside $JOB${ADD_DIRS:+ and the directories GOAL.md names (${ADD_DIRS})}.
 GOAL.md is the goal. PLAN.md is your checklist of '- [ ]' items (create it on the first run, then
 keep it current; check items off as '- [x]'). PROGRESS.md is your log.
 This run: read those files, then do the next unchecked items. You have at most ${MAX_TURNS:-60}
@@ -69,7 +76,7 @@ fails=0
 for i in $(seq 1 "${MAX_RUNS:-40}"); do
   [[ -f DONE ]] && break
   echo "=== run $i $(date '+%F %T')" | tee -a runs.log
-  out=$(claude -p "$PROMPT" --allowedTools "${ALLOW[@]}" --max-turns "${MAX_TURNS:-60}" 2>&1); rc=$?
+  out=$(claude -p "$PROMPT" ${DIRS[@]+"${DIRS[@]}"} --allowedTools "${ALLOW[@]}" --max-turns "${MAX_TURNS:-60}" 2>&1); rc=$?
   printf '%s\n' "$out" >> runs.log
   # Using up the turn budget is a normal end of a run, not a failure: just start the next one.
   if [[ $rc -eq 0 ]] || grep -q "Reached max turns" <<<"$out"; then

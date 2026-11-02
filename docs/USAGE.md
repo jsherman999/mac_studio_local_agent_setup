@@ -235,6 +235,8 @@ optional:
 | `RETRY_SLEEP` | 1200 | Seconds to wait after a failed run (for example, a usage limit) |
 | `MAX_FAILS` | 5 | Consecutive failed runs before giving up |
 | `NOTIFY_EMAIL` | (none) | Email `REPORT.md` here through the Gmail connector when done |
+| `EXTRA_ALLOW` | (none) | Extra semicolon-separated `--allowedTools` entries, e.g. `Bash(npm run data:*);Bash(npm test:*)` for a project validator |
+| `ADD_DIRS` | (none) | Colon-separated directories outside the job dir the job may edit, such as a repo (`--add-dir`) |
 
 Notes:
 - **Permissions:** the allowlist permits file edits, the local tools, `curl`, `python3`, `uv`,
