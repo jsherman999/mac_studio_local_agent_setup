@@ -210,6 +210,8 @@ with tables and sources."
 tools/long-job status                 # all jobs: running/stopped/done, plan progress, runs
 tools/long-job status fda-recalls     # goal, plan checklist, recent progress
 tools/long-job fda-recalls            # resume a stopped job (picks up from PLAN.md)
+tools/job-usage fda-recalls           # tokens + API-equivalent cost: Claude vs local models
+tools/job-usage --dir ~/ccode --days 1   # same, for interactive sessions run in a directory
 ```
 
 Each job has a directory, `~/data/jobs/<name>/` (set `JOBS_DIR` to change it):

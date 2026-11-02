@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Token and cost breakdown: Claude (driver) vs local models, for a long-job or any Claude Code project.
+
+    job-usage <job-name>            a long-job in $JOBS_DIR (default ~/data/jobs)
+    job-usage --dir <path>          any directory Claude Code ran in (e.g. ~/ccode)
+    job-usage ... --days N          only the last N days (default: everything)
+
+Claude side: sums `usage` from the Claude Code transcripts for that directory
+(~/.claude/projects/<dir-with-slashes-as-dashes>/*.jsonl), deduplicated by message id, and prices
+them at API list rates. On a subscription you are not billed per token; the dollar figure is the
+API-equivalent, useful for comparing against the local share.
+Local side: the local-agent ledger (~/Library/Logs/local-agent-mcp/usage.jsonl), limited to the
+time window the Claude transcripts cover. The ledger has no session id, so local calls made by
+other sessions in the same window are counted too.
+"""
+import json, os, re, sys, time
+from collections import defaultdict
+from pathlib import Path
+
+# $ per million tokens: input, output, cache read, cache write 5m (1.25x input), cache write 1h (2x input)
+PRICES = {
+    "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00, 8.00),
+    "claude-opus-5": (5.00, 25.00, 0.50, 6.25, 10.00),
+    "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50, 4.00),
+    "claude-sonnet-5": (2.00, 10.00, 0.20, 2.50, 4.00),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125, 0.20),
+    "claude-fable-5-1": (10.00, 50.00, 0.25, 12.50, 20.00),
+}
+DEFAULT = "claude-opus-5-5"
+
+
+def project_dir(path: Path) -> Path:
+    return Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(path.resolve()))
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__); return 1
+    days = float(argv[argv.index("--days") + 1]) if "--days" in argv else None
+    if argv[0] == "--dir":
+        work = Path(argv[1]).expanduser()
+    else:
+        work = Path(os.environ.get("JOBS_DIR", Path.home() / "data/jobs")) / argv[0]
+    pdir = project_dir(work)
+    if not pdir.is_dir():
+        print(f"no Claude transcripts for {work} (looked in {pdir})"); return 1
+    since = time.time() - days * 86400 if days else 0
+
+    seen, per_model = set(), defaultdict(lambda: defaultdict(int))
+    sessions, t_min, t_max = set(), None, None
+    for f in pdir.glob("*.jsonl"):
+        for line in f.open(errors="ignore"):
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            m = d.get("message") or {}
+            u = m.get("usage")
+            if d.get("type") != "assistant" or not u:
+                continue
+            ts = d.get("timestamp")
+            t = time.mktime(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")) - time.timezone if ts else None
+            if t and t < since:
+                continue
+            mid = m.get("id") or d.get("uuid")
+            if mid in seen:
+                continue
+            seen.add(mid)
+            sessions.add(d.get("sessionId"))
+            if t:
+                t_min, t_max = min(t_min or t, t), max(t_max or t, t)
+            cc = u.get("cache_creation") or {}
+            w1h = cc.get("ephemeral_1h_input_tokens", 0)
+            w5m = cc.get("ephemeral_5m_input_tokens", u.get("cache_creation_input_tokens", 0) - w1h)
+            s = per_model[m.get("model") or DEFAULT]
+            s["calls"] += 1
+            s["input"] += u.get("input_tokens", 0)
+            s["output"] += u.get("output_tokens", 0)
+            s["cache_read"] += u.get("cache_read_input_tokens", 0)
+            s["write_5m"] += max(w5m, 0)
+            s["write_1h"] += w1h
+
+    print(f"== Claude (driver)  {work}  sessions={len(sessions)}")
+    claude_cost, claude_in, claude_out = 0.0, 0, 0
+    for model, s in sorted(per_model.items()):
+        p = PRICES.get(model, PRICES[DEFAULT])
+        cost = (s["input"] * p[0] + s["output"] * p[1] + s["cache_read"] * p[2]
+                + s["write_5m"] * p[3] + s["write_1h"] * p[4]) / 1e6
+        claude_cost += cost
+        tot_in = s["input"] + s["cache_read"] + s["write_5m"] + s["write_1h"]
+        claude_in += tot_in; claude_out += s["output"]
+        print(f"  {model:20} calls {s['calls']:>5}  in {tot_in:>11,} (fresh {s['input']:,}, cache-read {s['cache_read']:,}, "
+              f"cache-write {s['write_5m'] + s['write_1h']:,})  out {s['output']:>9,}  ${cost:,.2f}")
+
+    led = Path(os.path.expanduser(os.environ.get("LOCAL_AGENT_LEDGER", "~/Library/Logs/local-agent-mcp/usage.jsonl")))
+    loc = defaultdict(lambda: defaultdict(float))
+    if led.exists() and t_min:
+        for line in led.open():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if t_min - 60 <= r["ts"] <= t_max + 600:
+                s = loc[r["tool"]]
+                s["calls"] += 1; s["in"] += r["prompt_tokens"]; s["out"] += r["completion_tokens"]; s["sec"] += r["seconds"]
+    print("== Local models (same time window)")
+    l_in = l_out = 0
+    for tool, s in sorted(loc.items()):
+        l_in += s["in"]; l_out += s["out"]
+        print(f"  {tool:22} calls {int(s['calls']):>5}  in {int(s['in']):>11,}  out {int(s['out']):>9,}  {s['sec'] / 60:,.1f} min")
+    if not loc:
+        print("  (no local-agent calls)")
+    p = PRICES[DEFAULT]
+    avoided = (l_in * p[0] + l_out * p[1]) / 1e6
+    print("== Summary")
+    print(f"  Claude: {claude_in + claude_out:,} tokens, ${claude_cost:,.2f} API-equivalent")
+    print(f"  Local:  {int(l_in + l_out):,} tokens, $0 (would be ~${avoided:,.2f} if Opus had read it uncached)")
+    tot = claude_in + claude_out + l_in + l_out
+    if tot:
+        print(f"  Local share of all tokens processed: {100 * (l_in + l_out) / tot:.1f}%")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
