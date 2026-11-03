@@ -145,6 +145,20 @@ async def main() -> int:
     code, out = await lam._run(["sh", "-c", 'echo "$PWD"; cat'], TMP / "src", 10)
     check("subprocess PWD=cwd, stdin closed", code == 0 and out.strip() == str(TMP / "src"), f"{code} {out}")
 
+    # opencode --format json: tokens summed across steps, events rendered readably
+    events = "\n".join(json.dumps(e) for e in [
+        {"type": "step_start", "part": {}},
+        {"type": "tool_use", "part": {"tool": "read", "state": {"status": "completed", "input": {"path": "a"}}}},
+        {"type": "step_finish", "part": {"tokens": {"input": 100, "output": 5, "reasoning": 2,
+                                                    "cache": {"read": 10, "write": 0}}}},
+        {"type": "text", "part": {"text": "\n\nDone: a says hello"}},
+        {"type": "step_finish", "part": {"tokens": {"input": 120, "output": 8, "reasoning": 0}}},
+    ]) + "\nnot json at all"
+    text, usage = lam._parse_opencode_events(events)
+    check("opencode token usage summed", usage == {"prompt_tokens": 230, "completion_tokens": 15}, str(usage))
+    check("opencode events rendered", "[read completed]" in text and "Done: a says hello" in text
+          and "not json at all" in text, text)
+
     out = text_of(await lam.mcp.call_tool("local_usage_report", {}))
     check("usage ledger", "TOTAL" in out, out)
 

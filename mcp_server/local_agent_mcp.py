@@ -869,6 +869,42 @@ async def _run(cmd: list[str], cwd: Path, timeout: float) -> tuple[int, str]:
     return proc.returncode or 0, out.decode(errors="replace")
 
 
+def _parse_opencode_events(out: str) -> tuple[str, dict[str, int]]:
+    """Turn `opencode run --format json` output (one event per line) into a readable transcript
+    and the summed token usage. Each step_finish carries that model call's tokens; input is the
+    full context per call, so the sum is what the local GPU actually processed. Non-JSON lines
+    (a crash, an older opencode) pass through unchanged."""
+    lines: list[str] = []
+    prompt = completion = 0
+    for raw in out.splitlines():
+        try:
+            ev = json.loads(raw)
+        except ValueError:
+            if raw.strip():
+                lines.append(raw)
+            continue
+        if not isinstance(ev, dict):
+            lines.append(raw)
+            continue
+        kind, part = ev.get("type"), ev.get("part") or {}
+        if kind == "text" and (part.get("text") or "").strip():
+            lines.append(part["text"].strip())
+        elif kind == "tool_use":
+            st = part.get("state") or {}
+            arg = json.dumps(st.get("input") or {})[:200]
+            lines.append(f"[{part.get('tool')} {st.get('status', '')}] {arg}")
+            if st.get("status") == "error":
+                lines.append(f"  error: {str(st.get('error') or st.get('output') or '')[:500]}")
+        elif kind == "step_finish":
+            tok = part.get("tokens") or {}
+            prompt += int(tok.get("input") or 0) + int((tok.get("cache") or {}).get("read") or 0)
+            completion += int(tok.get("output") or 0) + int(tok.get("reasoning") or 0)
+        elif kind == "error":
+            err = ev.get("error") or {}
+            lines.append(f"ERROR {err.get('type', '')}: {err.get('message') or err}")
+    return "\n".join(lines), {"prompt_tokens": prompt, "completion_tokens": completion}
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                       idempotentHint=False, openWorldHint=False))
 async def local_agent_task(
@@ -916,9 +952,10 @@ async def local_agent_task(
             except OSError:
                 pass
         t0 = time.monotonic()
-        code, out = await _run([oc, "run", *CFG.opencode_run_args, "--model", model or CFG.opencode_model, task],
-                               workdir, timeout_s)
-        _ledger("local_agent_task", model or CFG.opencode_model, {}, time.monotonic() - t0)
+        code, out = await _run([oc, "run", *CFG.opencode_run_args, "--format", "json",
+                                "--model", model or CFG.opencode_model, task], workdir, timeout_s)
+        out, usage = _parse_opencode_events(out)
+        _ledger("local_agent_task", model or CFG.opencode_model, usage, time.monotonic() - t0)
         _, stat = await _run(["git", "status", "--short"], workdir, 30)
         _, diffstat = await _run(["git", "diff", "--stat", "HEAD"], workdir, 30)
         tail = out[-6000:]
