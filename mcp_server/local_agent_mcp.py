@@ -700,9 +700,47 @@ async def _fetch_text(url: str, max_chars: int) -> str:
     if "html" in ctype or not ctype:
         text = await asyncio.to_thread(trafilatura.extract, r.text, include_tables=True,
                                        include_links=False, favor_recall=True) or ""
+        # Main-content extraction treats directory listings, link indexes and download pages as
+        # boilerplate and keeps only the intro (e.g. 418 of ~1,500 chars on an archive index), so
+        # the model then reports the listed items as absent. When little survives, use the whole
+        # page rendered as text, with link targets, instead.
+        if len(text) < FULLPAGE_FALLBACK_CHARS:
+            full = await asyncio.to_thread(_page_text, r.text)
+            if len(full) > 1.3 * len(text) + 200:
+                text = (f"[full page text: main-content extraction kept only {len(text)} chars]\n{full}")
     else:
         text = r.text
     return text[:max_chars]
+
+
+FULLPAGE_FALLBACK_CHARS = 2000
+SHORT_PAGE_CHARS = 1000
+_BLOCK_TAGS = {"p", "div", "br", "li", "tr", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "pre",
+               "table", "ul", "ol", "dl", "dt", "dd", "section", "article", "header", "footer",
+               "nav", "aside", "blockquote", "hr", "form", "main", "figure", "figcaption", "title"}
+
+
+def _page_text(html: str) -> str:
+    """Render a whole HTML page as plain text: one line per block element, links as
+    `text <href>` so listings keep their file and directory names."""
+    from lxml import html as lh
+
+    try:
+        root = lh.fromstring(html)
+    except Exception:  # noqa: BLE001  (empty or unparsable document)
+        return ""
+    for el in root.xpath("//script|//style|//noscript|//template|//svg"):
+        el.drop_tree()
+    for a in root.xpath("//a[@href]"):
+        href = (a.get("href") or "").strip()
+        if href and not href.startswith(("#", "javascript:")) and href != a.text_content().strip():
+            a.tail = f" <{href}>" + (a.tail or "")
+    for el in root.iter():
+        if isinstance(el.tag, str) and el.tag.lower() in _BLOCK_TAGS:
+            el.text = "\n" + (el.text or "")
+            el.tail = "\n" + (el.tail or "")
+    lines = (re.sub(r"\s+", " ", ln).strip() for ln in root.text_content().splitlines())
+    return "\n".join(ln for ln in lines if ln)
 
 
 @mcp.tool(annotations=RO_WEB)
@@ -748,9 +786,16 @@ async def local_web_fetch(url: str, question: str = "", max_chars: int = 200000)
             return "Fetched, but no main text could be extracted (JS-heavy page?)."
         if not question:
             return text[:12000] + (f"\n\n[truncated; {len(text):,} chars total]" if len(text) > 12000 else "")
+        short = len(text) < SHORT_PAGE_CHARS
+        if short:
+            # A short page is often a partial extraction; don't let the model turn "not in this
+            # text" into "does not exist".
+            question += ("\n\nNOTE: only a short amount of page text was available. If the answer is "
+                         "not in it, say the page text may be incomplete; do not claim the items are absent.")
         ans = await map_reduce([Doc(label=url, text=text)], question, model=CFG.model_general,
                                tool="local_web_fetch", max_answer_tokens=1500)
-        return ans + _footer(chars_read=f"{len(text):,}")
+        return ans + _footer(chars_read=f"{len(text):,}",
+                             warning="short page text; verify before relying on absence" if short else None)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 

@@ -66,6 +66,18 @@ def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"results": [
             {"title": "Page A", "url": "https://a.example/x", "content": "about needle"},
             {"title": "Page B", "url": "https://b.example/y", "content": "more"}]})
+    if "listing.example" in url:  # directory index: main-content extraction keeps only the intro
+        rows = "".join(f'<tr><td><a href="{d}">{t}</a></td></tr>' for d, t in [
+            ("DMD_Utilities", "DMD terminal utilities"), ("Development_Tools", "Development tools (assembler, C)"),
+            ("TCP-IP_Networking", "Ethernet driver and WIN3B TCP/IP software"), ("Writers_Workbench", "WWB 3.0")])
+        html = ('<html><head><title>Archive</title><link rel="stylesheet" href="/a.css"></head><body>'
+                '<div id="archive"><h1>The Software Archive</h1><div id="desc">'
+                "<p>This is an archive of software for an old computer.</p>"
+                "<p>Diskette images are sector-by-sector copies of original floppy disks.</p></div>"
+                '<div><p><a href="..">Up to parent directory</a></p></div>'
+                f'<table id="filelist"><thead><tr><th>Directory</th></tr></thead><tbody>{rows}</tbody></table>'
+                '</div></body></html>')
+        return httpx.Response(200, html=html)
     if "a.example" in url or "b.example" in url:
         html = "<html><body><article><h1>T</h1><p>" + ("filler text. " * 50) + " NEEDLE fact.</p></article></body></html>"
         return httpx.Response(200, html=html)
@@ -158,6 +170,22 @@ async def main() -> int:
     check("opencode token usage summed", usage == {"prompt_tokens": 230, "completion_tokens": 15}, str(usage))
     check("opencode events rendered", "[read completed]" in text and "Done: a says hello" in text
           and "not json at all" in text, text)
+
+    # directory listings must survive extraction (trafilatura drops them as boilerplate)
+    import trafilatura
+    real_extract = trafilatura.extract
+    trafilatura.extract = lambda html, **kw: "This is an archive of software for an old computer."
+    try:
+        t = await lam._fetch_text("https://listing.example/3b2/software/", 100000)
+    finally:
+        trafilatura.extract = real_extract
+    check("listing falls back to full page", "full page text" in t and "TCP-IP_Networking" in t
+          and "<TCP-IP_Networking>" in t and "WIN3B TCP/IP software" in t, t)
+    t = await lam._fetch_text("https://a.example/x", 100000)
+    check("article keeps main-content extraction", "NEEDLE" in t and "full page text" not in t, t)
+    check("page_text on junk", lam._page_text("") == "", "")
+    out = text_of(await lam.mcp.call_tool("local_web_fetch", {"url": "https://a.example/x", "question": "q"}))
+    check("short page warning", "warning=short page text" in out, out)
 
     out = text_of(await lam.mcp.call_tool("local_usage_report", {}))
     check("usage ledger", "TOTAL" in out, out)
