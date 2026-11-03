@@ -157,6 +157,16 @@ mcp = MCPServer(
 # --------------------------------------------------------------------------- #
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+# gpt-oss browsing-style citations: 【1†L9-L11】, 【3†source】, or the same in square brackets.
+# The †... part points at line ranges of its own tool output, which mean nothing to the caller.
+_DAGGER_CITE_RE = re.compile(r"[【\[]([^【】\[\]†\n]*)†[^【】\[\]\n]*[】\]]")
+
+
+def _normalize_citations(text: str) -> str:
+    """【1†L9-L11】 / [2†source] / 【3】 -> [1] / [2] / [3]; [file:Lx-y] citations are left alone."""
+    text = re.sub(r"[\u200b\u200c\u200d\u2060\ufeff]", "", text)  # zero-width chars gpt-oss puts in cites
+    text = _DAGGER_CITE_RE.sub(lambda m: f"[{m.group(1).strip()}]" if m.group(1).strip() else "", text)
+    return text.replace("【", "[").replace("】", "]")
 _http: httpx.AsyncClient | None = None
 _sem: asyncio.Semaphore | None = None
 
@@ -262,8 +272,8 @@ async def chat(
             f"Model '{model}' used its whole {payload['max_tokens']}-token budget on reasoning and "
             f"returned no answer. Raise max_tokens or set LOCAL_REASONING_EFFORT=low (or none)."
         )
-    # gpt-oss cites with 【...】; normalize so [file:Lx-y] / [n] citations look the same everywhere
-    return _THINK_RE.sub("", content).replace("【", "[").replace("】", "]").strip()
+    # gpt-oss cites with 【n†Lx-y】; normalize so [file:Lx-y] / [n] citations look the same everywhere
+    return _normalize_citations(_THINK_RE.sub("", content)).strip()
 
 
 def _model_for(kind: str, override: str | None) -> str:

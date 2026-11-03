@@ -117,6 +117,12 @@ async def main() -> int:
     out = text_of(await lam.mcp.call_tool("local_ask", {"prompt": "hi"}))
     check("ask strips <think>", out.startswith("final answer") and "hidden" not in out, out)
     check("ask normalizes 【n】 citations", out.endswith("NEEDLE [1]"), out)
+    for raw, want in [("a 【1†L9-L11】 b", "a [1] b"), ("x [2†L31-L38] y", "x [2] y"), ("p 【3†source】", "p [3]"),
+                      ("keep [src/f.py:L3-5] and [1]", "keep [src/f.py:L3-5] and [1]"),
+                      ("two [1†L2][4†L7-L9]", "two [1][4]"), ("z 【\u200b†source】.", "z ."),
+                      ("w [\u200b3†L1]", "w [3]")]:
+        got = lam._normalize_citations(raw)
+        check(f"dagger citation {raw!r}", got == want, got)
     await lam.mcp.call_tool("local_ask", {"prompt": "hi", "model_role": "coder"})
     check("reasoning effort per role", efforts == {lam.CFG.model_general: "low", lam.CFG.model_coder: "none"},
           str(efforts))
