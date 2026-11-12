@@ -98,8 +98,8 @@ class Config:
     llm_base_url: str = _env("LOCAL_LLM_BASE_URL", "http://127.0.0.1:1234/v1").rstrip("/")
     llm_api_key: str = _env("LOCAL_LLM_API_KEY", "local")
     model_general: str = _env("LOCAL_MODEL_GENERAL", "openai/gpt-oss-120b")
-    model_coder: str = _env("LOCAL_MODEL_CODER", "ornith-1.5-35b-a3b-mlx")
-    model_fast: str = _env("LOCAL_MODEL_FAST", "") or _env("LOCAL_MODEL_CODER", "ornith-1.5-35b-a3b-mlx")
+    model_coder: str = _env("LOCAL_MODEL_CODER", "qwen3.8-27b")
+    model_fast: str = _env("LOCAL_MODEL_FAST", "") or _env("LOCAL_MODEL_CODER", "qwen3.8-27b")
     # Characters of input we are willing to send in one local call. ~4 chars/token.
     ctx_chars: int = int(_env("LOCAL_CTX_CHARS", "120000"))
     chunk_chars: int = int(_env("LOCAL_CHUNK_CHARS", "40000"))
@@ -112,8 +112,8 @@ class Config:
     # Override for the coder model ("none" turns Qwen3.5 thinking off; at codegen's low temperature
     # it can otherwise loop until max_tokens).
     reasoning_effort_coder: str = _env("LOCAL_REASONING_EFFORT_CODER", "")
-    # Extra max_tokens for calls to the coder/fast model, for coders that always think (Ornith
-    # ignores reasoning_effort=none): their hidden reasoning counts against the small budgets of
+    # Extra max_tokens for calls to the coder/fast model, for models that always think (Qwen3.8
+    # still reasons briefly with reasoning_effort=none): their hidden reasoning counts against the small budgets of
     # internal calls (research queries 150, eval 600, map 1200) and can starve the answer.
     reasoning_reserve_coder: int = int(_env("LOCAL_REASONING_RESERVE_CODER", "0") or 0)
     searxng_url: str = _env("SEARXNG_URL", "http://127.0.0.1:8888").rstrip("/")
@@ -123,7 +123,7 @@ class Config:
     max_file_bytes: int = int(_env("LOCAL_AGENT_MAX_FILE_BYTES", str(20 * 1024 * 1024)))
     max_files: int = int(_env("LOCAL_AGENT_MAX_FILES", "500"))
     opencode_bin: str = _env("OPENCODE_BIN", "opencode")
-    opencode_model: str = _env("OPENCODE_MODEL", "lmstudio/ornith-1.5-35b-a3b-mlx")
+    opencode_model: str = _env("OPENCODE_MODEL", "lmstudio/qwen3.8-27b")
     # --standalone (OpenCode v2): a private server per task, so a timeout really stops the agent
     # instead of leaving the session running in the shared background service. Set it empty for
     # v1, which rejects the flag (its `run` already starts a private server).

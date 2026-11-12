@@ -6,13 +6,13 @@
       "package": "@opencode/ai/providers/openai-compatible",
       "settings": { "baseURL": "http://127.0.0.1:1234/v1" },
       "models": {
-        "ornith-1.5-35b-a3b-mlx": { "name": "Ornith 1.5 35B A3B (local)" },
+        "qwen3.8-27b": { "name": "Qwen3.8 27B (local, vision)" },
         "openai/gpt-oss-120b": { "name": "gpt-oss 120B (local)" }
       }
     }
   },
-  "model": "lmstudio/ornith-1.5-35b-a3b-mlx",
-  "agents": { "title": { "model": "lmstudio/ornith-1.5-35b-a3b-mlx" } },
+  "model": "lmstudio/qwen3.8-27b",
+  "agents": { "title": { "model": "lmstudio/openai/gpt-oss-120b" } },
   "update": "disable",
   "permissions": [
     { "action": "*", "resource": "*", "effect": "allow" },

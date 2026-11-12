@@ -50,7 +50,7 @@ flowchart LR
 |---|---|---|
 | LM Studio (MLX engine) | OpenAI-compatible server for local models | `:1234`, LaunchAgent |
 | General model (e.g. gpt-oss-120b) | Reading, synthesis, analysis | ~60–65 GB |
-| Coder model (Ornith-1.5-35B-A3B MoE, 4-bit MLX; was Qwen3-Coder-30B) | Codegen, agent tasks, fast extraction | ~19.5 GB |
+| Coder model (Qwen3.8-27B dense, 4-bit MLX, reads images; was Ornith-1.5-35B-A3B) | Codegen, agent tasks (fast extraction goes to the general model) | ~16 GB |
 | SearXNG | Private metasearch with a JSON API | Podman, `127.0.0.1:8888` |
 | `local-agent` MCP server | 10 tools that wrap all of the above | `mcp_server/local_agent_mcp.py` |
 | OpenCode | Full local coding agent for `local_agent_task` | `~/.config/opencode/opencode.json` |
@@ -109,7 +109,7 @@ everything in order.
 | Item | Approx. GB |
 |---|---|
 | gpt-oss-120b (MXFP4/MLX) | 60–65 |
-| Ornith-1.5-35B-A3B (4-bit MLX) | ~19.5 (Qwen3-Coder-30B 4-bit was ~17) |
+| Qwen3.8-27B (4-bit MLX) | ~16 (Ornith-1.5-35B-A3B was ~19.5) |
 | KV caches at 64k ctx | 8–15 |
 | macOS + apps + Podman VM | 16–20 |
 
@@ -270,6 +270,31 @@ gives `10-models.sh` its Hugging Face URL (a bare `owner/repo` is treated as a H
 Because Ornith always thinks, its hidden reasoning ate the 150-token budget of
 `local_research`'s query step and the call came back empty; `LOCAL_REASONING_RESERVE_CODER=2048`
 adds headroom to every coder/fast call. Small sample: a consistent edge, not proof of a large one.
+
+### Coder switch: Ornith-1.5-35B to Qwen3.8-27B (Studio, November 2026)
+
+Qwen3.8-27B (`mlx-community/Qwen3.8-27B-4bit`, LM Studio id `qwen3.8-27b`) replaced Ornith as
+the coder and OpenCode model because it reads images, and one copy in memory then serves both
+this setup and other local vision work on the Studio. It is a dense model, so it is much slower
+to decode than the A3B MoE it replaced:
+
+| Decode, ~1,000-token answer | Tokens/s |
+|---|---|
+| Ornith-1.5-35B-A3B | 139–143 |
+| gpt-oss-120b | 96 |
+| Qwen3.8-27B | 33 |
+
+That is why the fast role (extraction, research query steps) moved to gpt-oss-120b, which is
+already loaded. Qwen3.8 thinks by default and only partly honors `reasoning_effort=none` or
+`enable_thinking=false` (reasoning shrinks from ~850 to ~360 characters on a one-line task but
+does not stop), so `LOCAL_REASONING_RESERVE_CODER=2048` stays. With both models pinned, memory
+use fell from ~83 to ~79 GB.
+
+`tests/live_e2e.py` passed every tool after the switch: `local_codegen` in 10.5 s (about the same
+as Ornith) and the OpenCode `local_agent_task` in 48 s, slower than Ornith but with tests written
+and run. The A/B harness above has not been rerun on Qwen3.8, so its quality against Ornith is
+not measured. To go back, set `LOCAL_MODEL_CODER`, `LOCAL_MODEL_FAST` and `OPENCODE_MODEL` to
+`ornith-1.5-35b-a3b-mlx` and restore the model in `~/.config/opencode/opencode.json`.
 
 ## Using it
 
