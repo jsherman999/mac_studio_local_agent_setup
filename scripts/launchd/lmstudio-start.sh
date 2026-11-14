@@ -11,8 +11,9 @@ LMS="$HOME/.lmstudio/bin/lms"
 PORT=$(get LOCAL_LLM_BASE_URL | sed -E 's#^[a-z]+://[^:/]+:([0-9]+).*#\1#')
 GENERAL=$(get LOCAL_MODEL_GENERAL); CODER=$(get LOCAL_MODEL_CODER)
 CTX=$(get LOCAL_MODEL_CTX); CTX=${CTX:-65536}
+CTX_CODER=$(get LOCAL_MODEL_CTX_CODER); CTX_CODER=${CTX_CODER:-$CTX}
 PRELOAD=$(get LOCAL_MODEL_PRELOAD); PRELOAD=${PRELOAD:-both}
-echo "$(date '+%F %T') lmstudio-start: port=$PORT preload=$PRELOAD ctx=$CTX"
+echo "$(date '+%F %T') lmstudio-start: port=$PORT preload=$PRELOAD ctx=$CTX coder_ctx=$CTX_CODER"
 
 # LM Studio's background service can take a while to come up after login.
 for _ in $(seq 1 18); do
@@ -33,7 +34,8 @@ esac
 rc=0
 for m in $LOAD; do
   "$LMS" ps 2>/dev/null | grep -q "$m" && continue
-  "$LMS" load "$m" --context-length "$CTX" -y || { echo "load $m failed"; rc=1; }
+  c=$CTX; [[ "$m" == "$CODER" && "$m" != "$GENERAL" ]] && c=$CTX_CODER
+  "$LMS" load "$m" --context-length "$c" -y || { echo "load $m failed"; rc=1; }
 done
 "$LMS" ps
 exit $rc

@@ -243,7 +243,9 @@ When the Studio arrives: `make all` there (with `FORCE_ENV=1` if you copied this
   reinstalled with bootout + bootstrap. They also need `AbandonProcessGroup`: without it launchd
   kills the Podman VM (or an LM Studio the script launched) as soon as the start script exits.
 - After a reboot the models were only JIT-loaded on first request; the LM Studio agent now
-  re-pins both at `LOCAL_MODEL_CTX`.
+  re-pins both at `LOCAL_MODEL_CTX` (the coder at `LOCAL_MODEL_CTX_CODER` when that is set:
+  131072 on the Studio since November 2026, because long OpenCode sessions at 64k stopped with
+  "compaction.failed").
 
 Measured on the Studio: both models pinned at 64k context use ~75 GB (gpt-oss-120b 59 GiB,
 Qwen3-Coder-30B 4-bit 16 GiB) with ~48% of RAM still free; `local_agent_task` finishes the

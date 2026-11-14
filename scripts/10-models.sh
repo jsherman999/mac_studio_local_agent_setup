@@ -12,6 +12,7 @@ LMS="$HOME/.lmstudio/bin/lms"
 GENERAL=${GENERAL:-$(env_get LOCAL_MODEL_GENERAL)}
 CODER=${CODER:-$(env_get LOCAL_MODEL_CODER)}
 CTX=${CTX:-$(env_get LOCAL_MODEL_CTX)}; CTX=${CTX:-65536}
+CTX_CODER=${CTX_CODER:-$(env_get LOCAL_MODEL_CTX_CODER)}; CTX_CODER=${CTX_CODER:-$CTX}
 PRELOAD=${PRELOAD:-$(env_get LOCAL_MODEL_PRELOAD)}; PRELOAD=${PRELOAD:-both}
 
 GENERAL_SRC=$(env_get LOCAL_MODEL_GENERAL_SOURCE); CODER_SRC=$(env_get LOCAL_MODEL_CODER_SOURCE)
@@ -56,9 +57,10 @@ case "$PRELOAD" in
   general) LOAD=("$GENERAL") ;;
   *)       LOAD=() ;;
 esac
-log "Pinning: ${LOAD[*]:-(none; all JIT)} at ${CTX} ctx (adjust LOCAL_MODEL_CTX if OOM)"
+log "Pinning: ${LOAD[*]:-(none; all JIT)} at ${CTX} ctx, coder ${CTX_CODER} (adjust LOCAL_MODEL_CTX* if OOM)"
 for m in ${LOAD[@]+"${LOAD[@]}"}; do
-  "$LMS" ps 2>/dev/null | grep -q "$m" || "$LMS" load "$m" --context-length "$CTX" -y || warn "load $m failed"
+  c=$CTX; [[ "$m" == "$CODER" && "$m" != "$GENERAL" ]] && c=$CTX_CODER
+  "$LMS" ps 2>/dev/null | grep -q "$m" || "$LMS" load "$m" --context-length "$c" -y || warn "load $m failed"
 done
 if ! "$LMS" ps 2>/dev/null | grep -q "$GENERAL"; then
   log "Warming $GENERAL with a JIT request"
